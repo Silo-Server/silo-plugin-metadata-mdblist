@@ -1,0 +1,115 @@
+{
+  "title": "Jaws",
+  "year": 1975,
+  "released": "1975-06-20",
+  "released_digital": "1997-11-01",
+  "description": "When the seaside community of Amity finds itself under attack by a dangerous great white shark, the town's chief of police, a young marine biologist, and a grizzled hunter embark on a desperate quest to destroy the beast before it strikes again.",
+  "runtime": 124,
+  "score": 86,
+  "score_average": 86,
+  "ids": {
+    "imdb": "tt0073195",
+    "trakt": 457,
+    "tmdb": 578,
+    "tvdb": null,
+    "mal": null,
+    "mdblist": "om"
+  },
+  "type": "movie",
+  "updated": "2026-01-05T14:23:45Z",
+  "ratings": [
+    {
+      "source": "imdb",
+      "value": 8.1,
+      "score": 81,
+      "votes": 673852,
+      "url": 99
+    },
+    {
+      "source": "metacritic",
+      "value": 87,
+      "score": 87,
+      "votes": 21,
+      "url": "/jaws"
+    },
+    {
+      "source": "metacriticuser",
+      "value": null,
+      "score": null,
+      "votes": null,
+      "url": null
+    },
+    {
+      "source": "trakt",
+      "value": 78,
+      "score": 78,
+      "votes": 14033,
+      "url": null
+    },
+    {
+      "source": "tomatoes",
+      "value": 97,
+      "score": 97,
+      "votes": 102,
+      "url": "/m/jaws"
+    },
+    {
+      "source": "tmdb",
+      "value": 76,
+      "score": 76,
+      "votes": 10114,
+      "url": null
+    },
+    {
+      "source": "letterboxd",
+      "value": 8,
+      "score": 80,
+      "votes": 876082,
+      "url": "/film/jaws/"
+    },
+    {
+      "source": "rogerebert",
+      "value": 4,
+      "score": null,
+      "votes": null,
+      "url": "great-movie-jaws-1975"
+    },
+    {
+      "source": "myanimelist",
+      "value": null,
+      "score": null,
+      "votes": null,
+      "url": null
+    }
+  ],
+  "streams": [
+    {
+      "id": 9,
+      "name": "fuboTV"
+    },
+    {
+      "id": 10,
+      "name": "AMC"
+    }
+  ],
+  "watch_providers": [
+    {
+      "id": 8,
+      "name": "Netflix"
+    },
+    {
+      "id": 1796,
+      "name": "Netflix basic with Ads"
+    }
+  ],
+  "language": "en",
+  "spoken_language": "en",
+  "country": "us",
+  "certification": "PG",
+  "commonsense": true,
+  "age_rating": 13,
+  "status": "released",
+  "trailer": "https://youtube.com/watch?v=WKuZJjPSLXQ",
+  "poster": "https://image.tmdb.org/t/p/original/lxM6kqilAdpdhqUl2biYp5frUxE.jpg",
+  "backdrop": "https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/3nYlM34QhzdtAvWRV5bN4nLtnTc.jpg"
+}
