@@ -37,7 +37,10 @@
       "display_name": "MDBList",
       "description": "Aggregated ratings, Common Sense age rating, and certification. Enrichment only — never identifies an item.",
       "metadata": {
-        "required_external_ids": ["imdb", "tmdb"],
+        "required_external_ids": [
+          "imdb",
+          "tmdb"
+        ],
         "default_priority": {
           "movie": 8,
           "series": 8
