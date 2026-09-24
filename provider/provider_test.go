@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Silo-Server/silo-plugin-mdblist/metadata"
+	"github.com/Silo-Server/silo-plugin-metadata-mdblist/metadata"
 )
 
 // jawsFixturePath is a real captured MDBList response. Every rating-scale

@@ -1,4 +1,4 @@
-module github.com/Silo-Server/silo-plugin-mdblist
+module github.com/Silo-Server/silo-plugin-metadata-mdblist
 
 go 1.26.0
 

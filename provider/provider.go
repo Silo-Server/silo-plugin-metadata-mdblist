@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Silo-Server/silo-plugin-mdblist/metadata"
+	"github.com/Silo-Server/silo-plugin-metadata-mdblist/metadata"
 )
 
 // GetMetadata enriches an item another provider already identified.

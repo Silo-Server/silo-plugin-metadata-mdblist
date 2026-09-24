@@ -12,8 +12,8 @@ import (
 	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/Silo-Server/silo-plugin-mdblist/metadata"
-	"github.com/Silo-Server/silo-plugin-mdblist/provider"
+	"github.com/Silo-Server/silo-plugin-metadata-mdblist/metadata"
+	"github.com/Silo-Server/silo-plugin-metadata-mdblist/provider"
 )
 
 // fixturePath is the same real captured MDBList response the provider tests
