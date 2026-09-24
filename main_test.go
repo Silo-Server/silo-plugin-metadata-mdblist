@@ -685,6 +685,21 @@ func TestManifestContract(t *testing.T) {
 		t.Fatalf("default_priority = %v, want %v (season and episode must stay absent)", priority, wantPriority)
 	}
 
+	// Silo calls an enrichment-only provider only on the provider-ID keys it
+	// declares here. Without them the plugin never runs.
+	lookupIDs, ok := capabilityMetadata["lookup_provider_ids"].([]any)
+	if !ok {
+		t.Fatalf("capability metadata has no lookup_provider_ids list: %v", capabilityMetadata)
+	}
+	if want := []any{"imdb", "tmdb"}; !reflect.DeepEqual(lookupIDs, want) {
+		t.Fatalf("lookup_provider_ids = %v, want %v", lookupIDs, want)
+	}
+	// required_external_ids means "all of these" to the markers capability;
+	// declaring it here would suggest a constraint Silo does not apply.
+	if _, declared := capabilityMetadata["required_external_ids"]; declared {
+		t.Fatal("capability metadata still declares required_external_ids")
+	}
+
 	schemas := manifest.GetGlobalConfigSchema()
 	if len(schemas) != 1 {
 		t.Fatalf("got %d global config schemas, want 1", len(schemas))

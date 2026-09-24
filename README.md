@@ -42,21 +42,19 @@ so `score` is the input wherever it is present, and the per-source conversion
 is pinned to `provider/testdata/movie_jaws.json`. Sources Silo has no column
 for (Metacritic, Trakt, Letterboxd, Roger Ebert, MyAnimeList) are skipped.
 
-The Common Sense age has no typed field in the plugin API yet, so it rides in
-the free-form metadata map under `advisory_age` and `advisory_source` until the
-typed fields land.
+The Common Sense age has no typed field in the plugin API, so it rides in the
+free-form metadata map under `advisory_age` and `advisory_source`, which the
+host reads.
 
 ## Known limitations
 
-**The host does not call this plugin yet.** Silo gates every metadata RPC on a
-provider ID keyed by the capability's own id, which an enrichment-only provider
-can never obtain: it comes from a search result or a previous `GetMetadata`
-answer, and this plugin returns neither. The manifest declares
-`capabilities[0].metadata.required_external_ids`, but nothing in the host's
-metadata chain reads that key today — only the markers capability does — so the
-declaration is documentation, not a constraint the host enforces. Until the
-host learns to run a provider whose declared external IDs are present, the
-plugin installs and configures but contributes nothing.
+**Requires a Silo server that reads `lookup_provider_ids`.** Silo used to call
+a metadata provider only when the item carried an ID of the provider's own,
+which an enrichment-only provider never has. The manifest now declares
+`capabilities[0].metadata.lookup_provider_ids: ["imdb", "tmdb"]`, and servers
+that understand the key call this plugin whenever the item carries either ID.
+An older server ignores the key; the plugin then installs and configures but
+contributes nothing.
 
 A genuine 0% Rotten Tomatoes score is reported as "no score". Zero is the
 absent sentinel in the host's rating merge and columns, so it cannot currently

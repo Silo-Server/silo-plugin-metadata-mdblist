@@ -176,10 +176,9 @@ func metadataItemFromResult(result *metadata.MetadataResult, itemType string) *p
 // advisoryStruct carries the Common Sense age advisory in the free-form
 // metadata Struct.
 //
-// Forward-compatible seam: MetadataItem has no typed advisory fields yet (a
-// planned additive proto change adds them). Until then these keys ride in the
-// open metadata map, which today's host ignores, so emitting them costs
-// nothing and the typed fields can take over without a wire break.
+// MetadataItem has no typed advisory fields, so the pair rides in the open
+// metadata map under these two keys, which the host reads and allow-lists.
+// Typed proto fields remain a later additive option.
 func advisoryStruct(result *metadata.MetadataResult) *structpb.Struct {
 	if result.AdvisoryAge <= 0 {
 		return nil

@@ -1,6 +1,6 @@
 {
   "plugin_id": "silo.mdblist",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "checksum": "__CHECKSUM__",
   "silo_api_version": "v1",
   "presentation": {
@@ -37,7 +37,7 @@
       "display_name": "MDBList",
       "description": "Aggregated ratings, Common Sense age rating, and certification. Enrichment only — never identifies an item.",
       "metadata": {
-        "required_external_ids": [
+        "lookup_provider_ids": [
           "imdb",
           "tmdb"
         ],
