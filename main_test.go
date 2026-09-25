@@ -124,7 +124,7 @@ func TestGetMetadataEndToEnd(t *testing.T) {
 	}
 
 	paths, keys := api.requests()
-	if want := []string{"/imdb/movie/tt0073195"}; !reflect.DeepEqual(paths, want) {
+	if want := []string{"/tmdb/movie/578"}; !reflect.DeepEqual(paths, want) {
 		t.Fatalf("request paths = %v, want %v", paths, want)
 	}
 	if want := []string{"secret-key"}; !reflect.DeepEqual(keys, want) {
@@ -138,16 +138,54 @@ func TestGetMetadataEndToEnd(t *testing.T) {
 		t.Fatalf("ContentRating = %q, want %q", got, want)
 	}
 
-	// The host reads exactly these four keys (imdb and tmdb out of 10,
-	// rt_critic and rt_audience out of 100). The fixture has no Rotten
+	// The host stores these four keys in typed columns (imdb and tmdb out of
+	// 10, rt_critic and rt_audience out of 100). The fixture has no Rotten
 	// Tomatoes audience score, so that key must be absent rather than zero.
+	// "sources" carries every rated source on a 0-100 scale for hosts that
+	// store them; the fixture's metacriticuser and myanimelist entries are
+	// null and must not appear.
 	wantRatings := map[string]any{
 		"imdb":      8.1,
 		"tmdb":      7.6,
 		"rt_critic": float64(97),
+		"sources": map[string]any{
+			"imdb":       map[string]any{"score": float64(81), "votes": float64(673852)},
+			"tmdb":       map[string]any{"score": float64(76), "votes": float64(10114)},
+			"rt_critic":  map[string]any{"score": float64(97), "votes": float64(102)},
+			"metacritic": map[string]any{"score": float64(87), "votes": float64(21)},
+			"trakt":      map[string]any{"score": float64(78), "votes": float64(14033)},
+			"letterboxd": map[string]any{"score": float64(80), "votes": float64(876082)},
+			"rogerebert": map[string]any{"score": float64(100)},
+			"mdblist":    map[string]any{"score": float64(86)},
+		},
 	}
 	if got := item.GetRatings().AsMap(); !reflect.DeepEqual(got, wantRatings) {
 		t.Fatalf("Ratings = %v, want %v", got, wantRatings)
+	}
+
+	// Fill-empty fields: the host keeps TMDB's value wherever it has one, so
+	// these only land in blanks.
+	if got, want := item.GetYear(), int32(1975); got != want {
+		t.Fatalf("Year = %d, want %d", got, want)
+	}
+	if got, want := item.GetReleaseDate(), "1975-06-20"; got != want {
+		t.Fatalf("ReleaseDate = %q, want %q", got, want)
+	}
+	if got := item.GetFirstAirDate(); got != "" {
+		t.Fatalf("FirstAirDate = %q, want empty for a movie", got)
+	}
+	if got, want := item.GetRuntime(), int32(124); got != want {
+		t.Fatalf("Runtime = %d, want %d", got, want)
+	}
+	if got, want := item.GetOriginalLanguage(), "en"; got != want {
+		t.Fatalf("OriginalLanguage = %q, want %q", got, want)
+	}
+	if got, want := item.GetCountries(), []string{"US"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Countries = %v, want %v", got, want)
+	}
+	// "released" is a movie's status; the host's status field is a show's.
+	if got := item.GetStatus(); got != "" {
+		t.Fatalf("Status = %q, want empty for a movie", got)
 	}
 
 	// Forward-compatible seam: the advisory age rides in the free-form
@@ -177,8 +215,14 @@ func TestGetMetadataEndToEnd(t *testing.T) {
 	if got := item.GetOverview(); got != "" {
 		t.Fatalf("Overview = %q, want empty for an enrichment-only provider", got)
 	}
-	if got := item.GetYear(); got != 0 {
-		t.Fatalf("Year = %d, want 0 for an enrichment-only provider", got)
+	if got := item.GetTagline(); got != "" {
+		t.Fatalf("Tagline = %q, want empty for an enrichment-only provider", got)
+	}
+	if got := item.GetPosterPath(); got != "" {
+		t.Fatalf("PosterPath = %q, want empty for an enrichment-only provider", got)
+	}
+	if got := item.GetVideos(); len(got) != 0 {
+		t.Fatalf("Videos = %v, want none: the host accumulates videos, so MDBList's trailer would duplicate TMDB's", got)
 	}
 }
 
@@ -187,8 +231,9 @@ func TestGetMetadataForSeriesEndToEnd(t *testing.T) {
 
 	body := `{"title":"Breaking Bad","type":"show","certification":"TV-MA","commonsense":false,` +
 		`"age_rating":16,"ids":{"imdb":"tt0903747","tmdb":1396,"tvdb":81189},` +
+		`"year":2008,"released":"2008-01-20","runtime":2700,"status":"Ended","language":"en","country":"us",` +
 		`"ratings":[{"source":"imdb","value":9.5,"score":95},{"source":"tmdb","value":89,"score":89},` +
-		`{"source":"tomatoes","value":96,"score":96},{"source":"audience","value":97,"score":97}]}`
+		`{"source":"tomatoes","value":96,"score":96},{"source":"popcorn","value":97,"score":97}]}`
 
 	rs, ms, api := newServers(t, http.StatusOK, body)
 	rs.client.SetAPIKey("k")
@@ -222,9 +267,30 @@ func TestGetMetadataForSeriesEndToEnd(t *testing.T) {
 		"tmdb":        8.9,
 		"rt_critic":   float64(96),
 		"rt_audience": float64(97),
+		"sources": map[string]any{
+			"imdb":        map[string]any{"score": float64(95)},
+			"tmdb":        map[string]any{"score": float64(89)},
+			"rt_critic":   map[string]any{"score": float64(96)},
+			"rt_audience": map[string]any{"score": float64(97)},
+		},
 	}
 	if got := item.GetRatings().AsMap(); !reflect.DeepEqual(got, wantRatings) {
 		t.Fatalf("Ratings = %v, want %v", got, wantRatings)
+	}
+
+	// A show's first air date goes to first_air_date and its status through;
+	// its runtime is a whole-series figure, not per episode, so it stays out.
+	if got, want := item.GetFirstAirDate(), "2008-01-20"; got != want {
+		t.Fatalf("FirstAirDate = %q, want %q", got, want)
+	}
+	if got := item.GetReleaseDate(); got != "" {
+		t.Fatalf("ReleaseDate = %q, want empty for a show", got)
+	}
+	if got := item.GetRuntime(); got != 0 {
+		t.Fatalf("Runtime = %d, want 0 for a show", got)
+	}
+	if got, want := item.GetStatus(), "Ended"; got != want {
+		t.Fatalf("Status = %q, want %q", got, want)
 	}
 
 	wantMetadata := map[string]any{"advisory_age": float64(16), "advisory_source": "mdblist"}
@@ -428,6 +494,7 @@ func TestRatingsStruct(t *testing.T) {
 	tests := []struct {
 		name    string
 		ratings metadata.Ratings
+		sources map[string]metadata.RatingSource
 		want    map[string]any
 	}{
 		{
@@ -444,6 +511,24 @@ func TestRatingsStruct(t *testing.T) {
 			want:    map[string]any{"rt_critic": float64(97)},
 		},
 		{
+			// Per-source ratings ride in a nested object. A host that
+			// predates it reads only number-valued keys, so the flat four
+			// must stay exactly as they were beside it.
+			name:    "per-source ratings nest under sources",
+			ratings: metadata.Ratings{IMDB: 8.1},
+			sources: map[string]metadata.RatingSource{
+				metadata.RatingSourceIMDB:       {Score: 81, Votes: 673852},
+				metadata.RatingSourceRogerEbert: {Score: 100},
+			},
+			want: map[string]any{
+				"imdb": 8.1,
+				"sources": map[string]any{
+					"imdb":       map[string]any{"score": float64(81), "votes": float64(673852)},
+					"rogerebert": map[string]any{"score": float64(100)},
+				},
+			},
+		},
+		{
 			name:    "no ratings at all",
 			ratings: metadata.Ratings{},
 			want:    nil,
@@ -454,7 +539,7 @@ func TestRatingsStruct(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := ratingsStruct(tt.ratings)
+			result := ratingsStruct(tt.ratings, tt.sources)
 			if tt.want == nil {
 				if result != nil {
 					t.Fatalf("ratingsStruct() = %v, want nil", result.AsMap())
@@ -471,7 +556,7 @@ func TestRatingsStruct(t *testing.T) {
 	}
 }
 
-func TestAdvisoryStruct(t *testing.T) {
+func TestMetadataStruct(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -490,6 +575,20 @@ func TestAdvisoryStruct(t *testing.T) {
 			want:   map[string]any{"advisory_age": float64(16), "advisory_source": "mdblist"},
 		},
 		{
+			name:   "keywords ride beside the advisory age",
+			result: metadata.MetadataResult{AdvisoryAge: 13, AdvisorySource: metadata.AdvisorySourceCommonSense, Keywords: []string{"shark", "beach"}},
+			want: map[string]any{
+				"advisory_age":    float64(13),
+				"advisory_source": "commonsense",
+				"keywords":        []any{"shark", "beach"},
+			},
+		},
+		{
+			name:   "keywords alone",
+			result: metadata.MetadataResult{Keywords: []string{"shark"}},
+			want:   map[string]any{"keywords": []any{"shark"}},
+		},
+		{
 			name:   "no advisory age means no metadata struct",
 			result: metadata.MetadataResult{AdvisorySource: metadata.AdvisorySourceCommonSense},
 			want:   nil,
@@ -500,18 +599,18 @@ func TestAdvisoryStruct(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := advisoryStruct(&tt.result)
+			result := metadataStruct(&tt.result)
 			if tt.want == nil {
 				if result != nil {
-					t.Fatalf("advisoryStruct() = %v, want nil", result.AsMap())
+					t.Fatalf("metadataStruct() = %v, want nil", result.AsMap())
 				}
 				return
 			}
 			if result == nil {
-				t.Fatalf("advisoryStruct() = nil, want %v", tt.want)
+				t.Fatalf("metadataStruct() = nil, want %v", tt.want)
 			}
 			if got := result.AsMap(); !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("advisoryStruct() = %v, want %v", got, tt.want)
+				t.Fatalf("metadataStruct() = %v, want %v", got, tt.want)
 			}
 		})
 	}

@@ -31,6 +31,34 @@ type Ratings struct {
 	RTAudience float64
 }
 
+// Rating source keys used in MetadataResult.RatingSources. They are Silo's
+// names, not MDBList's: the host stores them verbatim, so they stay stable even
+// if MDBList renames a source (it already spells the Rotten Tomatoes audience
+// score three different ways).
+const (
+	RatingSourceIMDB           = "imdb"
+	RatingSourceTMDB           = "tmdb"
+	RatingSourceRTCritic       = "rt_critic"
+	RatingSourceRTAudience     = "rt_audience"
+	RatingSourceMetacritic     = "metacritic"
+	RatingSourceMetacriticUser = "metacritic_user"
+	RatingSourceTrakt          = "trakt"
+	RatingSourceLetterboxd     = "letterboxd"
+	RatingSourceRogerEbert     = "rogerebert"
+	RatingSourceMyAnimeList    = "myanimelist"
+	// RatingSourceMDBList is MDBList's own aggregate score for the title.
+	RatingSourceMDBList = "mdblist"
+)
+
+// RatingSource is one source's rating on a common 0-100 scale, plus how many
+// votes produced it (0 when MDBList does not say). The common scale lets the
+// host store every source in one shape; the four typed columns in Ratings keep
+// their own scales for compatibility.
+type RatingSource struct {
+	Score float64
+	Votes int64
+}
+
 // MetadataResult is what one MDBList lookup contributes; a nil result means
 // MDBList had nothing to add. Every field is optional: the host merges
 // fill-empty, so anything left at its zero value stays with whichever provider
@@ -43,6 +71,24 @@ type MetadataResult struct {
 	ContentRating string
 
 	Ratings Ratings
+
+	// RatingSources carries every source MDBList rated, keyed by the
+	// RatingSource* constants. Hosts that predate per-source storage ignore
+	// it; it never replaces Ratings.
+	RatingSources map[string]RatingSource
+
+	// The fields below fill what the primary provider left empty. The host
+	// merges fill-empty (countries and keywords are unioned), so none of them
+	// can displace TMDB's values.
+	Year             int
+	ReleaseDate      string // movies only
+	FirstAirDate     string // shows only
+	Runtime          int    // minutes, movies only
+	OriginalLanguage string
+	Countries        []string
+	Genres           []string
+	Keywords         []string
+	ShowStatus       string // shows only; the host normalises the spelling
 
 	// AdvisoryAge is the minimum recommended age in years, 0 when unknown.
 	AdvisoryAge int

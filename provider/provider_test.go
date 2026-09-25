@@ -441,6 +441,7 @@ func TestGetMetadataWithoutUsableIDMakesNoRequest(t *testing.T) {
 		{name: "only ids mdblist cannot be queried by", providerIDs: map[string]string{"tvdb": "81189", "plex": "abc"}},
 		{name: "imdb id missing its tt prefix", providerIDs: map[string]string{"imdb": "0073195"}},
 		{name: "imdb id that is only the prefix", providerIDs: map[string]string{"imdb": "tt"}},
+		{name: "imdb id with non-digits after the prefix", providerIDs: map[string]string{"imdb": "ttabc"}},
 		{name: "empty imdb id", providerIDs: map[string]string{"imdb": ""}},
 		{name: "non-numeric tmdb id", providerIDs: map[string]string{"tmdb": "not-a-number"}},
 		{name: "empty tmdb id", providerIDs: map[string]string{"tmdb": ""}},
@@ -516,8 +517,22 @@ func TestGetMetadataRouteSelection(t *testing.T) {
 			wantPath:    "/imdb/movie/tt0073195",
 		},
 		{
-			name:        "imdb is preferred when both ids are present",
+			// TMDB IDs are integers, the form MDBList's batch endpoint
+			// documents, so they win whenever both are present.
+			name:        "tmdb is preferred when both ids are present",
 			providerIDs: map[string]string{"imdb": "tt0073195", "tmdb": "578"},
+			itemType:    "movie",
+			wantPath:    "/tmdb/movie/578",
+		},
+		{
+			name:        "tmdb ids are sent in canonical decimal form",
+			providerIDs: map[string]string{"tmdb": " 0578 "},
+			itemType:    "movie",
+			wantPath:    "/tmdb/movie/578",
+		},
+		{
+			name:        "a malformed tmdb id falls back to imdb",
+			providerIDs: map[string]string{"imdb": "tt0073195", "tmdb": "not-a-number"},
 			itemType:    "movie",
 			wantPath:    "/imdb/movie/tt0073195",
 		},
