@@ -1,8 +1,11 @@
 # Silo MDBList plugin
 
-Fills in ratings and age ratings that other metadata providers leave empty:
-IMDb, TMDB, Rotten Tomatoes critic and audience, the release certification, and
-the Common Sense Media minimum age.
+Fills in what other metadata providers leave empty: ratings from every source
+MDBList aggregates (IMDb, TMDB, Rotten Tomatoes critic and audience,
+Metacritic, Letterboxd, Trakt, Roger Ebert, MyAnimeList, and MDBList's own
+score), the release certification, the Common Sense Media minimum age, and
+basic facts such as year, release date, runtime, language, country, genres,
+keywords, and show status.
 
 ## Why it has to sit below a primary provider
 
@@ -27,24 +30,62 @@ does not guess, and it does not fall back to searching.
 | `ratings[source=imdb]` | `rating_imdb` (0-10) |
 | `ratings[source=tmdb]` | `rating_tmdb` (0-10) |
 | `ratings[source=tomatoes]` | `rating_rt_critic` (0-100) |
-| `ratings[source=audience]` | `rating_rt_audience` (0-100) |
+| `ratings[source=popcorn\|tomatoesaudience\|audience]` | `rating_rt_audience` (0-100) |
+| every rated source, plus the top-level `score` | `ratings.sources` (0-100 with vote counts; see below) |
 | `certification` | content rating |
 | `age_rating` + `commonsense` | `advisory_age` / `advisory_source` |
+| `year` | year |
+| `released` | release date (movies) or first air date (shows) |
+| `runtime` | runtime (movies only; a show's figure is not per episode) |
+| `language` | original language |
+| `country` | countries (uppercased to match TMDB's ISO codes) |
+| `genres` | genres |
+| `keywords` (requested with `append_to_response=keyword`) | keywords |
+| `status` | show status (shows only; the host normalises the spelling) |
 
-Nothing else. The plugin maps no titles, overviews, artwork or external IDs:
-MDBList returns an `ids` object, but an enrichment-only provider must not hand
-the host identity it did not verify, so that object is not even parsed.
+Silo merges a library's providers fill-empty, so every one of these only lands
+where the primary provider left a blank. Countries and keywords are unioned
+host side. Genres go to whichever provider supplies them first.
+
+Nothing else. The plugin maps no titles, overviews, taglines, artwork, trailers
+or external IDs. MDBList's text is English only and would override the
+library's language wherever the primary provider left a blank. The host keeps
+every provider's trailers, so MDBList's would duplicate TMDB's. And an
+enrichment-only provider must not hand the host identity it did not verify, so
+MDBList's `ids` object is read only to match batch answers to requests.
 
 MDBList reports each rating twice: `value` on the source's own scale and
 `score` normalised to 0-100. The scales are not uniform — IMDb's `value` is out
-of 10, TMDB's and Rotten Tomatoes' are out of 100, Roger Ebert's is out of 5 —
-so `score` is the input wherever it is present, and the per-source conversion
-is pinned to `provider/testdata/movie_jaws.json`. Sources Silo has no column
-for (Metacritic, Trakt, Letterboxd, Roger Ebert, MyAnimeList) are skipped.
+of 10, TMDB's and Rotten Tomatoes' are out of 100, Letterboxd's is doubled to
+10, Roger Ebert's is out of 4 — so `score` is the input wherever it is present,
+and the per-source conversion is pinned to `provider/testdata/movie_jaws.json`.
+
+### Per-source ratings
+
+Alongside the four flat keys, the ratings Struct carries a `sources` object:
+
+```json
+{
+  "imdb": 8.1, "tmdb": 7.6, "rt_critic": 97,
+  "sources": {
+    "imdb":       {"score": 81, "votes": 673852},
+    "metacritic": {"score": 87, "votes": 21},
+    "letterboxd": {"score": 80, "votes": 876082},
+    "rogerebert": {"score": 100},
+    "mdblist":    {"score": 86}
+  }
+}
+```
+
+Keys are `imdb`, `tmdb`, `rt_critic`, `rt_audience`, `metacritic`,
+`metacritic_user`, `trakt`, `letterboxd`, `rogerebert`, `myanimelist`, and
+`mdblist`. Every `score` is 0-100; `votes` is omitted when MDBList has no
+count. Silo servers that predate per-source storage read only number-valued
+keys and skip `sources`, so the plugin sends it to every server version.
 
 The Common Sense age has no typed field in the plugin API, so it rides in the
 free-form metadata map under `advisory_age` and `advisory_source`, which the
-host reads.
+host reads. Keywords ride there too, under `keywords`.
 
 ## Known limitations
 
@@ -69,11 +110,27 @@ be told apart from unrated; fixing it needs nullable rating fields host side.
 
 Without a key the plugin stays idle and contributes nothing.
 
-## Rate limits and failure behavior
+## Rate limits, batching and failure behavior
 
 MDBList meters requests per day: 1000 on the free tier, then 10k, 25k, 100k and
-250k by paid tier. The plugin applies a conservative client-side limiter so a
-large scan does not arrive as one burst.
+250k by paid tier, resetting at 00:00 UTC. Every tier is also capped at 1000
+reads per fixed five-minute window.
+
+- **Batching.** Silo asks for one item at a time but runs several match workers
+  at once. Lookups for the same route (IMDb or TMDB, movie or show) that arrive
+  within 250 ms of each other go out as one request to MDBList's batch
+  endpoint, up to 100 IDs. A lookup with no partner uses the ordinary
+  single-title request. If MDBList refuses a batch, the plugin retries it in
+  halves; when both halves go through, it remembers the smaller limit for that
+  route. TMDB IDs are preferred over IMDb IDs for lookups because the batch
+  endpoint's schema types IDs as integers.
+- **Quota pause.** When MDBList answers 429, the plugin stops sending requests
+  until `Retry-After` (or, for the daily quota, until 00:00 UTC). When a
+  successful answer reports `X-RateLimit-Remaining: 0`, it pauses until
+  `X-RateLimit-Reset` without spending another request. Saving a different API
+  key lifts the pause.
+- **Pacing.** A client-side limiter keeps requests at three a second, under the
+  five-minute cap.
 
 A metadata refresh never fails because of MDBList. No API key, a rejected key,
 an unknown title, an exhausted quota, or an outage all resolve to "no data",

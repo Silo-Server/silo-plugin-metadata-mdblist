@@ -112,7 +112,7 @@ func main() {
 
 	rs := &runtimeServer{
 		manifest: manifest,
-		client:   provider.NewClient(),
+		client:   newClient(),
 	}
 
 	runtime.Serve(runtime.ServeConfig{
@@ -121,6 +121,17 @@ func main() {
 			MetadataProvider: &metadataServer{runtime: rs},
 		},
 	})
+}
+
+// newClient builds the MDBList client with a User-Agent naming this build.
+func newClient() *provider.Client {
+	client := provider.NewClient()
+	userAgent := "silo-plugin-metadata-mdblist"
+	if version != "" {
+		userAgent += "/" + version
+	}
+	client.SetUserAgent(userAgent)
+	return client
 }
 
 func loadManifest() (*pluginv1.PluginManifest, error) {
@@ -163,37 +174,59 @@ func apiKeyFromConfig(entries []*pluginv1.ConfigEntry) string {
 
 // metadataItemFromResult builds the wire item. It sets no ProviderIds: this
 // provider never identifies an item, and anything it put there would be merged
-// into the item's durable identity host side.
+// into the item's durable identity set host side. Every other field is merged
+// fill-empty, so it only lands where the primary provider left a blank.
 func metadataItemFromResult(result *metadata.MetadataResult, itemType string) *pluginv1.MetadataItem {
 	return &pluginv1.MetadataItem{
-		ItemType:      itemType,
-		ContentRating: result.ContentRating,
-		Ratings:       ratingsStruct(result.Ratings),
-		Metadata:      advisoryStruct(result),
+		ItemType:         itemType,
+		ContentRating:    result.ContentRating,
+		Ratings:          ratingsStruct(result.Ratings, result.RatingSources),
+		Metadata:         metadataStruct(result),
+		Year:             int32(result.Year),
+		ReleaseDate:      result.ReleaseDate,
+		FirstAirDate:     result.FirstAirDate,
+		Runtime:          int32(result.Runtime),
+		OriginalLanguage: result.OriginalLanguage,
+		Countries:        result.Countries,
+		Genres:           result.Genres,
+		Status:           result.ShowStatus,
 	}
 }
 
-// advisoryStruct carries the Common Sense age advisory in the free-form
-// metadata Struct.
+// metadataStruct carries what MetadataItem has no typed field for, in the
+// free-form metadata Struct under keys the host reads and allow-lists.
 //
-// MetadataItem has no typed advisory fields, so the pair rides in the open
-// metadata map under these two keys, which the host reads and allow-lists.
-// Typed proto fields remain a later additive option.
-func advisoryStruct(result *metadata.MetadataResult) *structpb.Struct {
-	if result.AdvisoryAge <= 0 {
-		return nil
+// The Common Sense age advisory rides under "advisory_age" and
+// "advisory_source"; typed proto fields remain a later additive option. The
+// host reads keywords only from here, under "keywords".
+func metadataStruct(result *metadata.MetadataResult) *structpb.Struct {
+	values := make(map[string]any, 3)
+	if result.AdvisoryAge > 0 {
+		values["advisory_age"] = result.AdvisoryAge
+		values["advisory_source"] = result.AdvisorySource
 	}
-	return structFromMap(map[string]any{
-		"advisory_age":    result.AdvisoryAge,
-		"advisory_source": result.AdvisorySource,
-	})
+	if len(result.Keywords) > 0 {
+		keywords := make([]any, 0, len(result.Keywords))
+		for _, keyword := range result.Keywords {
+			keywords = append(keywords, keyword)
+		}
+		values["keywords"] = keywords
+	}
+	return structFromMap(values)
 }
 
-// ratingsStruct emits the four keys the host reads. A zero is omitted: the
-// host merges fill-empty, so an emitted zero would occupy the column without
-// carrying a rating.
-func ratingsStruct(ratings metadata.Ratings) *structpb.Struct {
-	values := make(map[string]any, 4)
+// ratingsStruct emits the four keys the host stores in typed columns, plus a
+// "sources" object with every source MDBList rated.
+//
+// The four flat keys keep their scales (imdb and tmdb 0-10, rt_critic and
+// rt_audience 0-100). A zero is omitted: the host merges fill-empty, so an
+// emitted zero would occupy the column without carrying a rating.
+//
+// "sources" maps a source name to {"score": 0-100, "votes": n}. Hosts that
+// predate per-source storage read only number-valued keys and skip it, so it
+// is safe to send to every host version.
+func ratingsStruct(ratings metadata.Ratings, sources map[string]metadata.RatingSource) *structpb.Struct {
+	values := make(map[string]any, 5)
 	if ratings.IMDB > 0 {
 		values["imdb"] = ratings.IMDB
 	}
@@ -205,6 +238,17 @@ func ratingsStruct(ratings metadata.Ratings) *structpb.Struct {
 	}
 	if ratings.RTAudience > 0 {
 		values["rt_audience"] = ratings.RTAudience
+	}
+	if len(sources) > 0 {
+		perSource := make(map[string]any, len(sources))
+		for name, source := range sources {
+			entry := map[string]any{"score": source.Score}
+			if source.Votes > 0 {
+				entry["votes"] = float64(source.Votes)
+			}
+			perSource[name] = entry
+		}
+		values["sources"] = perSource
 	}
 	return structFromMap(values)
 }
