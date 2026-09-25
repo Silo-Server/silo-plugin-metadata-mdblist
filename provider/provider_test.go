@@ -525,6 +525,12 @@ func TestGetMetadataRouteSelection(t *testing.T) {
 			wantPath:    "/tmdb/movie/578",
 		},
 		{
+			name:        "tmdb ids are sent in canonical decimal form",
+			providerIDs: map[string]string{"tmdb": " 0578 "},
+			itemType:    "movie",
+			wantPath:    "/tmdb/movie/578",
+		},
+		{
 			name:        "a malformed tmdb id falls back to imdb",
 			providerIDs: map[string]string{"imdb": "tt0073195", "tmdb": "not-a-number"},
 			itemType:    "movie",

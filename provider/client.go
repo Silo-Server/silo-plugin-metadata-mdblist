@@ -364,11 +364,9 @@ func (c *Client) pauseForLimit(header http.Header, message string) {
 	}
 
 	now := c.now()
-	if header != nil {
-		if seconds, err := strconv.ParseInt(strings.TrimSpace(header.Get("Retry-After")), 10, 64); err == nil && seconds > 0 {
-			c.pauseUntil(now.Add(time.Duration(seconds)*time.Second), reason)
-			return
-		}
+	if until, ok := retryAfter(header, now); ok {
+		c.pauseUntil(until, reason)
+		return
 	}
 	if strings.Contains(strings.ToLower(message), "daily") {
 		// The daily quota resets at 00:00 UTC.
@@ -377,4 +375,26 @@ func (c *Client) pauseForLimit(header http.Header, message string) {
 		return
 	}
 	c.pauseUntil(now.Add(defaultRetryAfter), reason)
+}
+
+// retryAfter reads Retry-After in either of its forms: delay seconds, which
+// MDBList documents, or an HTTP date.
+func retryAfter(header http.Header, now time.Time) (time.Time, bool) {
+	if header == nil {
+		return time.Time{}, false
+	}
+	value := strings.TrimSpace(header.Get("Retry-After"))
+	if value == "" {
+		return time.Time{}, false
+	}
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if seconds <= 0 {
+			return time.Time{}, false
+		}
+		return now.Add(time.Duration(seconds) * time.Second), true
+	}
+	if when, err := http.ParseTime(value); err == nil && when.After(now) {
+		return when, true
+	}
+	return time.Time{}, false
 }

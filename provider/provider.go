@@ -65,15 +65,14 @@ func normalizeIMDbID(value string) string {
 	return value
 }
 
+// normalizeTMDbID returns a TMDB ID in canonical decimal form, so "0578" and
+// "578" are one lookup and a batch answer's ids.tmdb matches the request.
 func normalizeTMDbID(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
+	id, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+	if err != nil || id == 0 {
 		return ""
 	}
-	if _, err := strconv.ParseInt(value, 10, 64); err != nil {
-		return ""
-	}
-	return value
+	return strconv.FormatUint(id, 10)
 }
 
 // mdblistMediaType maps Silo's item type onto MDBList's path segment. Seasons

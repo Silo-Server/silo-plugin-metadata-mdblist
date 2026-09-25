@@ -210,3 +210,26 @@ func TestInBandQuotaErrorOnASingleLookupPauses(t *testing.T) {
 		t.Fatalf("made %d requests, want none after the in-band quota error", got)
 	}
 }
+
+func TestRetryAfterAcceptsAnHTTPDate(t *testing.T) {
+	t.Parallel()
+
+	clock := &fakeClock{now: time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)}
+	resume := clock.Now().Add(2 * time.Hour)
+	api := newScriptedAPI(t, func(w http.ResponseWriter, req recordedRequest) {
+		w.Header().Set("Retry-After", resume.Format(http.TimeFormat))
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":"API rate limit exceeded!"}`)
+	})
+	client := api.client(0)
+	client.now = clock.Now
+
+	fetchOne(t, client)
+
+	client.quotaMu.Lock()
+	until := client.cooldownUntil
+	client.quotaMu.Unlock()
+	if !until.Equal(resume) {
+		t.Fatalf("paused until %s, want %s from the HTTP-date Retry-After", until, resume)
+	}
+}
