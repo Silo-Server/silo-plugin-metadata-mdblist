@@ -178,7 +178,7 @@ func (c *Client) FetchMedia(ctx context.Context, idProvider, mediaType, mediaID 
 // title, rather than refusing the request or failing.
 func (c *Client) fetchSingle(ctx context.Context, key batchKey, mediaID string) (*mediaResponse, bool) {
 	apiKey, baseURL, _ := c.snapshot()
-	endpoint := fmt.Sprintf("%s/%s/%s/%s?apikey=%s&append_to_response=keyword",
+	endpoint := fmt.Sprintf("%s/%s/%s/%s?apikey=%s",
 		baseURL,
 		url.PathEscape(key.idProvider),
 		url.PathEscape(key.mediaType),

@@ -191,9 +191,8 @@ func (c *Client) fetchBatch(ctx context.Context, key batchKey, ids []string) (ma
 	label := fmt.Sprintf("batch of %d %s/%s", len(ids), key.idProvider, key.mediaType)
 
 	payload, err := json.Marshal(struct {
-		IDs              []any    `json:"ids"`
-		AppendToResponse []string `json:"append_to_response"`
-	}{IDs: batchIDs(key, ids), AppendToResponse: []string{"keyword"}})
+		IDs []any `json:"ids"`
+	}{IDs: batchIDs(key, ids)})
 	if err != nil {
 		log.Printf("mdblist: encode %s: %v", label, err)
 		return nil, batchFailed

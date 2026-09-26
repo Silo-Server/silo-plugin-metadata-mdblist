@@ -102,6 +102,12 @@ func mdblistMediaType(itemType string) (string, bool) {
 // only, so filling a blank with them would put English text on an item whose
 // library asked for another language.
 //
+// Keywords and countries are left out too. The host adds list fields from
+// every provider together rather than filling a blank, so MDBList's keywords,
+// which are slugs such as "parent-child-relationship" mixed with MDBList's own
+// tags such as "has-trailer" and "2k-blu-ray", would pile up on top of TMDB's
+// keywords on every title, and its countries on top of TMDB's.
+//
 // mediaType is the route the lookup used ("movie" or "show"). A body that
 // answers with the other type means the external ID resolved to a different
 // kind of title, so nothing from it is safe to attach.
@@ -113,9 +119,7 @@ func resultFromResponse(response *mediaResponse, mediaType string) *metadata.Met
 	result := &metadata.MetadataResult{
 		ContentRating:    strings.TrimSpace(response.Certification),
 		OriginalLanguage: strings.ToLower(strings.TrimSpace(response.Language)),
-		Countries:        countryCodes(response.Country),
 		Genres:           cleanLabels(response.Genres),
-		Keywords:         cleanLabels(response.Keywords),
 	}
 
 	if response.Year > 0 {
@@ -155,20 +159,6 @@ func releaseDate(value string) string {
 		return ""
 	}
 	return value
-}
-
-// countryCodes turns MDBList's lowercase country ("us", occasionally a comma
-// list) into the uppercase ISO 3166-1 codes TMDB reports, so the host's
-// case-insensitive union does not add a duplicate.
-func countryCodes(value string) []string {
-	var codes []string
-	for _, part := range strings.Split(value, ",") {
-		code := strings.ToUpper(strings.TrimSpace(part))
-		if len(code) == 2 {
-			codes = append(codes, code)
-		}
-	}
-	return codes
 }
 
 // cleanLabels trims, drops empties and removes case-insensitive duplicates.

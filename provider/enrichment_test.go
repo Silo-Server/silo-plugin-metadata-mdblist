@@ -119,9 +119,6 @@ func TestFillFieldsForAMovie(t *testing.T) {
 	if got, want := result.OriginalLanguage, "en"; got != want {
 		t.Fatalf("OriginalLanguage = %q, want %q", got, want)
 	}
-	if got, want := result.Countries, []string{"US"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("Countries = %v, want %v", got, want)
-	}
 }
 
 func TestFillFieldsForAShow(t *testing.T) {
@@ -145,48 +142,42 @@ func TestFillFieldsForAShow(t *testing.T) {
 	if got, want := result.OriginalLanguage, "en"; got != want {
 		t.Fatalf("OriginalLanguage = %q, want %q", got, want)
 	}
-	if got, want := result.Countries, []string{"US", "GB"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("Countries = %v, want %v", got, want)
-	}
 }
 
 func TestFillFieldsRejectMalformedValues(t *testing.T) {
 	t.Parallel()
 
-	body := `{"type":"movie","year":0,"released":"June 1975","runtime":-5,"language":"  ","country":"United States"}`
+	body := `{"type":"movie","year":0,"released":"June 1975","runtime":-5,"language":"  "}`
 	result := resultFromResponse(decodeResponse(t, body), "movie")
 
-	if result.Year != 0 || result.ReleaseDate != "" || result.Runtime != 0 || result.OriginalLanguage != "" || result.Countries != nil {
+	if result.Year != 0 || result.ReleaseDate != "" || result.Runtime != 0 || result.OriginalLanguage != "" {
 		t.Fatalf("malformed fields leaked through: %+v", result)
 	}
 }
 
-// TestGenresAndKeywordsDecodeEitherShape covers both forms MDBList may use
-// for a list of names. Neither is pinned by a captured response yet.
-func TestGenresAndKeywordsDecodeEitherShape(t *testing.T) {
+// TestGenresDecodeEitherShape covers the {"id", "title"} objects the live API
+// sends and plain strings.
+func TestGenresDecodeEitherShape(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		body         string
-		wantGenres   []string
-		wantKeywords []string
+		name       string
+		body       string
+		wantGenres []string
 	}{
 		{
-			name:         "objects with title and name",
-			body:         `{"type":"movie","genres":[{"id":1,"title":"Thriller"},{"id":2,"title":"Horror"}],"keywords":[{"id":9,"name":"shark"},{"id":10,"name":"Shark"}]}`,
-			wantGenres:   []string{"Thriller", "Horror"},
-			wantKeywords: []string{"shark"},
+			name:       "objects with a title",
+			body:       `{"type":"movie","genres":[{"id":1,"title":"Thriller"},{"id":2,"title":"Horror"},{"id":3,"title":"thriller"}]}`,
+			wantGenres: []string{"Thriller", "Horror"},
 		},
 		{
-			name:         "plain strings",
-			body:         `{"type":"movie","genres":["Thriller"," "],"keywords":["beach","shark"]}`,
-			wantGenres:   []string{"Thriller"},
-			wantKeywords: []string{"beach", "shark"},
+			name:       "plain strings",
+			body:       `{"type":"movie","genres":["Thriller"," "]}`,
+			wantGenres: []string{"Thriller"},
 		},
 		{
 			name: "an unexpected shape is dropped without losing the body",
-			body: `{"type":"movie","certification":"PG","genres":{"1":"Thriller"},"keywords":42}`,
+			body: `{"type":"movie","certification":"PG","genres":{"1":"Thriller"}}`,
 		},
 	}
 
@@ -197,9 +188,6 @@ func TestGenresAndKeywordsDecodeEitherShape(t *testing.T) {
 			result := resultFromResponse(decodeResponse(t, tt.body), "movie")
 			if !reflect.DeepEqual(result.Genres, tt.wantGenres) {
 				t.Fatalf("Genres = %v, want %v", result.Genres, tt.wantGenres)
-			}
-			if !reflect.DeepEqual(result.Keywords, tt.wantKeywords) {
-				t.Fatalf("Keywords = %v, want %v", result.Keywords, tt.wantKeywords)
 			}
 		})
 	}

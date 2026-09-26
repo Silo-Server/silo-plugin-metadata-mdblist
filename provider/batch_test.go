@@ -160,8 +160,9 @@ func TestConcurrentLookupsShareOneBatchRequest(t *testing.T) {
 	if len(batch.ids) != 3 {
 		t.Fatalf("batch ids = %v, want the three requested", batch.ids)
 	}
-	if want := []string{"keyword"}; len(batch.appended) != 1 || batch.appended[0] != want[0] {
-		t.Fatalf("append_to_response = %v, want %v", batch.appended, want)
+	// Keywords are not used, so none are requested.
+	if len(batch.appended) != 0 {
+		t.Fatalf("append_to_response = %v, want none", batch.appended)
 	}
 
 	if got := imdbRating(answers["tt0000001"]); got != 1.1 {
@@ -222,8 +223,8 @@ func TestLoneLookupUsesTheSingleRoute(t *testing.T) {
 	if got, want := requests[0].path, "/imdb/movie/tt0073195"; got != want {
 		t.Fatalf("path = %q, want %q", got, want)
 	}
-	if !strings.Contains(requests[0].query, "append_to_response=keyword") {
-		t.Fatalf("query = %q, want append_to_response=keyword", requests[0].query)
+	if strings.Contains(requests[0].query, "append_to_response") {
+		t.Fatalf("query = %q, want no append_to_response", requests[0].query)
 	}
 	if got, want := requests[0].userAgent, "silo-plugin-metadata-mdblist/1.2.3"; got != want {
 		t.Fatalf("User-Agent = %q, want %q", got, want)

@@ -4,8 +4,8 @@ Fills in what other metadata providers leave empty: ratings from every source
 MDBList aggregates (IMDb, TMDB, Rotten Tomatoes critic and audience,
 Metacritic, Letterboxd, Trakt, Roger Ebert, MyAnimeList, and MDBList's own
 score), the release certification, the Common Sense Media minimum age, and
-basic facts such as year, release date, runtime, language, country, genres,
-keywords, and show status.
+basic facts such as year, release date, runtime, language, genres, and show
+status.
 
 ## Why it has to sit below a primary provider
 
@@ -38,14 +38,18 @@ does not guess, and it does not fall back to searching.
 | `released` | release date (movies) or first air date (shows) |
 | `runtime` | runtime (movies only; a show's figure is not per episode) |
 | `language` | original language |
-| `country` | countries (uppercased to match TMDB's ISO codes) |
 | `genres` | genres |
-| `keywords` (requested with `append_to_response=keyword`) | keywords |
 | `status` | show status (shows only; the host normalises the spelling) |
 
 Silo merges a library's providers fill-empty, so every one of these only lands
-where the primary provider left a blank. Countries and keywords are unioned
-host side. Genres go to whichever provider supplies them first.
+where the primary provider left a blank. Genres go to whichever provider
+supplies them first.
+
+Keywords and countries are not sent. Silo adds list fields from every provider
+together instead of filling a blank, so MDBList's would be added to TMDB's on
+every title. Its keywords are slugs (`parent-child-relationship` next to TMDB's
+`parent child relationship`) mixed with MDBList's own tags such as
+`has-trailer` and `2k-blu-ray`: 0.3.0 appended about 24 of them per title.
 
 Nothing else. The plugin maps no titles, overviews, taglines, artwork, trailers
 or external IDs. MDBList's text is English only and would override the
@@ -85,7 +89,7 @@ keys and skip `sources`, so the plugin sends it to every server version.
 
 The Common Sense age has no typed field in the plugin API, so it rides in the
 free-form metadata map under `advisory_age` and `advisory_source`, which the
-host reads. Keywords ride there too, under `keywords`.
+host reads.
 
 ## Known limitations
 

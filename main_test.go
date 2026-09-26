@@ -180,8 +180,14 @@ func TestGetMetadataEndToEnd(t *testing.T) {
 	if got, want := item.GetOriginalLanguage(), "en"; got != want {
 		t.Fatalf("OriginalLanguage = %q, want %q", got, want)
 	}
-	if got, want := item.GetCountries(), []string{"US"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("Countries = %v, want %v", got, want)
+	// The fixture carries "country": "us", but the host unions countries
+	// across providers, so MDBList's would be added to TMDB's.
+	if got := item.GetCountries(); len(got) != 0 {
+		t.Fatalf("Countries = %v, want none", got)
+	}
+	// Keywords would pile up on TMDB's the same way.
+	if _, ok := item.GetMetadata().AsMap()["keywords"]; ok {
+		t.Fatalf("metadata carries keywords: %v", item.GetMetadata().AsMap())
 	}
 	// "released" is a movie's status; the host's status field is a show's.
 	if got := item.GetStatus(); got != "" {
@@ -573,20 +579,6 @@ func TestMetadataStruct(t *testing.T) {
 			name:   "mdblist derived age",
 			result: metadata.MetadataResult{AdvisoryAge: 16, AdvisorySource: metadata.AdvisorySourceMDBList},
 			want:   map[string]any{"advisory_age": float64(16), "advisory_source": "mdblist"},
-		},
-		{
-			name:   "keywords ride beside the advisory age",
-			result: metadata.MetadataResult{AdvisoryAge: 13, AdvisorySource: metadata.AdvisorySourceCommonSense, Keywords: []string{"shark", "beach"}},
-			want: map[string]any{
-				"advisory_age":    float64(13),
-				"advisory_source": "commonsense",
-				"keywords":        []any{"shark", "beach"},
-			},
-		},
-		{
-			name:   "keywords alone",
-			result: metadata.MetadataResult{Keywords: []string{"shark"}},
-			want:   map[string]any{"keywords": []any{"shark"}},
 		},
 		{
 			name:   "no advisory age means no metadata struct",
