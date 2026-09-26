@@ -101,6 +101,13 @@ that understand the key call this plugin whenever the item carries either ID.
 An older server ignores the key; the plugin then installs and configures but
 contributes nothing.
 
+**Reports failures as errors, which older servers log as warnings.** The
+manifest also declares `bulk_lookup_limit: 100`, which opts the plugin into
+Silo's bulk enrichment pass, and the plugin reports a spent quota, an outage or
+a missing key as a gRPC error rather than an empty item (see below). Servers
+with the pass log those errors at debug level. An older server logs one warning
+per item while the quota is spent, and otherwise behaves as before.
+
 A genuine 0% Rotten Tomatoes score is reported as "no score". Zero is the
 absent sentinel in the host's rating merge and columns, so it cannot currently
 be told apart from unrated; fixing it needs nullable rating fields host side.
@@ -121,9 +128,10 @@ MDBList meters requests per day: 1000 on the free tier, then 10k, 25k, 100k and
 reads per fixed five-minute window.
 
 - **Batching.** Silo asks for one item at a time but runs several match workers
-  at once. Lookups for the same route (IMDb or TMDB, movie or show) that arrive
-  within 250 ms of each other go out as one request to MDBList's batch
-  endpoint, up to 100 IDs. A lookup with no partner uses the ordinary
+  at once, and its hourly Bulk Metadata Enrichment task keeps 100 lookups in
+  flight (the manifest's `bulk_lookup_limit`). Lookups for the same route (IMDb
+  or TMDB, movie or show) that arrive within 250 ms of each other go out as one
+  request to MDBList's batch endpoint, up to 100 IDs. A lookup with no partner uses the ordinary
   single-title request. If MDBList refuses a batch, the plugin retries it in
   halves; when both halves go through, it remembers the smaller limit for that
   route. TMDB IDs are preferred over IMDb IDs for lookups because the batch
@@ -136,10 +144,21 @@ reads per fixed five-minute window.
 - **Pacing.** A client-side limiter keeps requests at three a second, under the
   five-minute cap.
 
-A metadata refresh never fails because of MDBList. No API key, a rejected key,
-an unknown title, an exhausted quota, or an outage all resolve to "no data",
-leaving those fields for another provider. The only error the plugin propagates
-is the host cancelling the request.
+A metadata refresh never fails because of MDBList: Silo continues past a
+provider's error. A title MDBList does not know is an empty answer. Every other
+failure is a gRPC status, so Silo can tell "nothing to find" from "ask again
+later" and its bulk pass does not file a paused lookup as a title with no data:
+
+| Failure | Status |
+|---|---|
+| Quota or burst limit spent, including while paused | `RESOURCE_EXHAUSTED` |
+| No API key configured | `FAILED_PRECONDITION` |
+| Key rejected (HTTP 401 or 403) | `UNAUTHENTICATED` |
+| Outage: unreachable, HTTP 5xx, an unexpected error body | `UNAVAILABLE` |
+| MDBList refused or garbled one title's answer | `INTERNAL` |
+
+The plugin logs each failed request, and a quota pause once when it begins. A
+missing key is not logged: the plugin simply stays idle until one is saved.
 
 ## Building
 

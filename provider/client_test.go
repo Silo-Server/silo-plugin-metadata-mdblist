@@ -66,8 +66,8 @@ func TestFetchMediaWithoutAPIKeyMakesNoRequest(t *testing.T) {
 			client := api.client(apiKey)
 
 			response, err := client.FetchMedia(context.Background(), "imdb", "movie", "tt0073195")
-			if err != nil {
-				t.Fatalf("FetchMedia() returned error: %v", err)
+			if !errors.Is(err, ErrNotConfigured) {
+				t.Fatalf("FetchMedia() error = %v, want ErrNotConfigured", err)
 			}
 			if response != nil {
 				t.Fatalf("FetchMedia() = %+v, want no response", response)
@@ -114,28 +114,31 @@ func TestFetchMediaRejectsIncompleteArguments(t *testing.T) {
 	}
 }
 
-// TestFetchMediaTurnsEveryMDBListFailureIntoNoData is the availability
-// contract at its source: whatever MDBList answers, the client reports "no
-// data" rather than an error, so a metadata refresh never fails on its
-// account.
-func TestFetchMediaTurnsEveryMDBListFailureIntoNoData(t *testing.T) {
+// TestFetchMediaClassifiesEveryMDBListAnswer is the failure contract at its
+// source: a title MDBList does not know is "no data", and every other failure
+// is an error saying why, so Silo can ask again later instead of recording the
+// title as having nothing to find.
+func TestFetchMediaClassifiesEveryMDBListAnswer(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		status int
-		body   string
+		name    string
+		status  int
+		body    string
+		wantErr error
 	}{
-		{name: "401 rejected key", status: http.StatusUnauthorized, body: `{"error":"Invalid API key"}`},
-		{name: "403 forbidden", status: http.StatusForbidden, body: ``},
+		{name: "401 rejected key", status: http.StatusUnauthorized, body: `{"error":"Invalid API key"}`, wantErr: ErrKeyRejected},
+		{name: "403 forbidden", status: http.StatusForbidden, body: ``, wantErr: ErrKeyRejected},
 		{name: "404 unknown title", status: http.StatusNotFound, body: `{"error":"not found"}`},
-		{name: "429 quota or burst limit", status: http.StatusTooManyRequests, body: `{"error":"limit"}`},
-		{name: "500 upstream outage", status: http.StatusInternalServerError, body: `oops`},
-		{name: "503 upstream outage", status: http.StatusServiceUnavailable, body: ``},
-		{name: "200 with an error body", status: http.StatusOK, body: `{"error":"API request limit reached"}`},
+		{name: "422 refused title", status: http.StatusUnprocessableEntity, body: `{"error":"bad id"}`, wantErr: ErrUnusableAnswer},
+		{name: "429 quota or burst limit", status: http.StatusTooManyRequests, body: `{"error":"limit"}`, wantErr: ErrQuotaExhausted},
+		{name: "500 upstream outage", status: http.StatusInternalServerError, body: `oops`, wantErr: ErrUnavailable},
+		{name: "503 upstream outage", status: http.StatusServiceUnavailable, body: ``, wantErr: ErrUnavailable},
+		{name: "200 with a quota error body", status: http.StatusOK, body: `{"error":"API request limit reached"}`, wantErr: ErrQuotaExhausted},
+		{name: "200 with another error body", status: http.StatusOK, body: `{"error":"Something went wrong"}`, wantErr: ErrUnavailable},
 		{name: "200 with response false", status: http.StatusOK, body: `{"response":false}`},
-		{name: "200 with truncated json", status: http.StatusOK, body: `{"ratings":[`},
-		{name: "200 with a non-json body", status: http.StatusOK, body: `<html>nope</html>`},
+		{name: "200 with truncated json", status: http.StatusOK, body: `{"ratings":[`, wantErr: ErrUnusableAnswer},
+		{name: "200 with a non-json body", status: http.StatusOK, body: `<html>nope</html>`, wantErr: ErrUnusableAnswer},
 	}
 
 	for _, tt := range tests {
@@ -146,8 +149,11 @@ func TestFetchMediaTurnsEveryMDBListFailureIntoNoData(t *testing.T) {
 			client := api.client("test-key")
 
 			response, err := client.FetchMedia(context.Background(), "imdb", "movie", "tt0073195")
-			if err != nil {
+			if tt.wantErr == nil && err != nil {
 				t.Fatalf("FetchMedia() returned error: %v", err)
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("FetchMedia() error = %v, want %v", err, tt.wantErr)
 			}
 			if response != nil {
 				t.Fatalf("FetchMedia() = %+v, want no response", response)
@@ -156,7 +162,7 @@ func TestFetchMediaTurnsEveryMDBListFailureIntoNoData(t *testing.T) {
 	}
 }
 
-func TestFetchMediaUnreachableHostIsNotAnError(t *testing.T) {
+func TestFetchMediaUnreachableHostIsUnavailable(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -168,8 +174,8 @@ func TestFetchMediaUnreachableHostIsNotAnError(t *testing.T) {
 	client.SetAPIKey("test-key")
 
 	response, err := client.FetchMedia(context.Background(), "imdb", "movie", "tt0073195")
-	if err != nil {
-		t.Fatalf("FetchMedia() returned error: %v", err)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("FetchMedia() error = %v, want ErrUnavailable", err)
 	}
 	if response != nil {
 		t.Fatalf("FetchMedia() = %+v, want no response", response)

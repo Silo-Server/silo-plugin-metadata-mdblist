@@ -12,9 +12,11 @@ import (
 
 // GetMetadata enriches an item another provider already identified.
 //
-// It returns (nil, nil) — never an error — when the request carries no imdb or
-// tmdb ID, when the item type is one MDBList does not cover, and when MDBList
-// has nothing to say. Only a cancelled or expired context produces an error.
+// It returns (nil, nil) when the request carries no imdb or tmdb ID, when the
+// item type is one MDBList does not cover, and when MDBList has nothing to
+// say. It returns an error, wrapping one of the sentinels in errors.go, when
+// MDBList could not answer: no key, a rejected key, a spent quota, an outage,
+// or an unusable answer; and when the caller's context ends.
 func (c *Client) GetMetadata(ctx context.Context, req metadata.MetadataRequest) (*metadata.MetadataResult, error) {
 	mediaType, ok := mdblistMediaType(req.ContentType)
 	if !ok {

@@ -10,10 +10,13 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/Silo-Server/silo-plugin-metadata-mdblist/metadata"
@@ -64,7 +67,7 @@ func (s *metadataServer) GetMetadata(ctx context.Context, req *pluginv1.GetMetad
 		ContentType: req.GetItemType(),
 	})
 	if err != nil {
-		return nil, err
+		return nil, lookupStatus(err)
 	}
 	if result == nil {
 		// An empty item, not an error: MDBList having nothing for a title is
@@ -73,6 +76,30 @@ func (s *metadataServer) GetMetadata(ctx context.Context, req *pluginv1.GetMetad
 	}
 
 	return &pluginv1.GetMetadataResponse{Item: metadataItemFromResult(result, req.GetItemType())}, nil
+}
+
+// lookupStatus maps a lookup failure to the gRPC status Silo reads it by. The
+// statuses follow the host's contract for bulk enrichment providers: every
+// status but INTERNAL means "MDBList cannot answer right now, ask again later",
+// and INTERNAL means this one title's answer was unusable. A cancelled or
+// expired caller context passes through for gRPC to map.
+func lookupStatus(err error) error {
+	var code codes.Code
+	switch {
+	case errors.Is(err, provider.ErrQuotaExhausted):
+		code = codes.ResourceExhausted
+	case errors.Is(err, provider.ErrNotConfigured):
+		code = codes.FailedPrecondition
+	case errors.Is(err, provider.ErrKeyRejected):
+		code = codes.Unauthenticated
+	case errors.Is(err, provider.ErrUnavailable):
+		code = codes.Unavailable
+	case errors.Is(err, provider.ErrUnusableAnswer):
+		code = codes.Internal
+	default:
+		return err
+	}
+	return status.Error(code, err.Error())
 }
 
 // The remaining MetadataProvider RPCs exist because the host calls every
