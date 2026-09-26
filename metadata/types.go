@@ -78,16 +78,16 @@ type MetadataResult struct {
 	RatingSources map[string]RatingSource
 
 	// The fields below fill what the primary provider left empty. The host
-	// merges fill-empty (countries and keywords are unioned), so none of them
-	// can displace TMDB's values.
+	// merges them fill-empty, so none of them can displace TMDB's values.
+	// Countries and keywords are deliberately absent: the host unions list
+	// fields across providers, so MDBList's would be added to TMDB's rather
+	// than fill a blank (see resultFromResponse).
 	Year             int
 	ReleaseDate      string // movies only
 	FirstAirDate     string // shows only
 	Runtime          int    // minutes, movies only
 	OriginalLanguage string
-	Countries        []string
 	Genres           []string
-	Keywords         []string
 	ShowStatus       string // shows only; the host normalises the spelling
 
 	// AdvisoryAge is the minimum recommended age in years, 0 when unknown.

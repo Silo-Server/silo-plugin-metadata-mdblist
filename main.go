@@ -187,7 +187,6 @@ func metadataItemFromResult(result *metadata.MetadataResult, itemType string) *p
 		FirstAirDate:     result.FirstAirDate,
 		Runtime:          int32(result.Runtime),
 		OriginalLanguage: result.OriginalLanguage,
-		Countries:        result.Countries,
 		Genres:           result.Genres,
 		Status:           result.ShowStatus,
 	}
@@ -198,19 +197,13 @@ func metadataItemFromResult(result *metadata.MetadataResult, itemType string) *p
 //
 // The Common Sense age advisory rides under "advisory_age" and
 // "advisory_source"; typed proto fields remain a later additive option. The
-// host reads keywords only from here, under "keywords".
+// host also reads "keywords" from here, which this plugin never sends (see
+// resultFromResponse).
 func metadataStruct(result *metadata.MetadataResult) *structpb.Struct {
-	values := make(map[string]any, 3)
+	values := make(map[string]any, 2)
 	if result.AdvisoryAge > 0 {
 		values["advisory_age"] = result.AdvisoryAge
 		values["advisory_source"] = result.AdvisorySource
-	}
-	if len(result.Keywords) > 0 {
-		keywords := make([]any, 0, len(result.Keywords))
-		for _, keyword := range result.Keywords {
-			keywords = append(keywords, keyword)
-		}
-		values["keywords"] = keywords
 	}
 	return structFromMap(values)
 }

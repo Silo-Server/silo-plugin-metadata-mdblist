@@ -39,12 +39,8 @@ type mediaResponse struct {
 	Released string    `json:"released"`
 	Runtime  int       `json:"runtime"`
 	Language string    `json:"language"`
-	Country  string    `json:"country"`
 	Status   string    `json:"status"`
 	Genres   labelList `json:"genres"`
-	// Keywords is present only when the request asked for
-	// append_to_response=keyword.
-	Keywords labelList `json:"keywords"`
 
 	// Error and Response appear instead of a body when MDBList rejects the
 	// request — most often an exhausted daily quota. Both are absent on
@@ -92,9 +88,8 @@ func (id *flexibleID) UnmarshalJSON(data []byte) error {
 
 // labelList decodes a list of names that MDBList may send either as plain
 // strings or as objects carrying the name under "title" or "name". The live
-// shape of "genres" and "keywords" is not pinned by a captured response, so
-// both forms are accepted and anything else is dropped rather than failing the
-// whole body.
+// API sends genres as {"id", "title"} objects; plain strings are accepted too,
+// and anything else is dropped rather than failing the whole body.
 type labelList []string
 
 func (l *labelList) UnmarshalJSON(data []byte) error {
