@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -111,6 +112,39 @@ func fetchAll(t *testing.T, client *Client, idProvider string, ids ...string) ma
 	}
 	wg.Wait()
 	return answers
+}
+
+// fetchAllResults runs lookups concurrently and returns each one's answer or
+// error, for batches where some lookups are expected to fail.
+func fetchAllResults(client *Client, idProvider string, ids ...string) map[string]lookupResult {
+	var mu sync.Mutex
+	results := make(map[string]lookupResult, len(ids))
+	var wg sync.WaitGroup
+	for _, id := range ids {
+		wg.Go(func() {
+			response, err := client.FetchMedia(context.Background(), idProvider, "movie", id)
+			mu.Lock()
+			results[id] = lookupResult{response: response, err: err}
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	return results
+}
+
+// fetchAllErrors runs lookups that are all expected to fail and returns each
+// one's error.
+func fetchAllErrors(t *testing.T, client *Client, idProvider string, ids ...string) map[string]error {
+	t.Helper()
+
+	errs := make(map[string]error, len(ids))
+	for id, result := range fetchAllResults(client, idProvider, ids...) {
+		if result.response != nil {
+			t.Errorf("FetchMedia(%s) = %+v, want no data", id, result.response)
+		}
+		errs[id] = result.err
+	}
+	return errs
 }
 
 func imdbRating(response *mediaResponse) float64 {
@@ -308,7 +342,7 @@ func TestRejectedBatchFallsBackAndRemembers(t *testing.T) {
 	}
 }
 
-func TestFailedBatchAnswersNoDataWithoutRetrying(t *testing.T) {
+func TestFailedBatchReportsTheOutageWithoutRetrying(t *testing.T) {
 	t.Parallel()
 
 	api := newScriptedAPI(t, func(w http.ResponseWriter, req recordedRequest) {
@@ -316,14 +350,14 @@ func TestFailedBatchAnswersNoDataWithoutRetrying(t *testing.T) {
 	})
 	client := api.client(time.Second)
 
-	answers := fetchAll(t, client, "imdb", "tt0000001", "tt0000002", "tt0000003")
+	errs := fetchAllErrors(t, client, "imdb", "tt0000001", "tt0000002", "tt0000003")
 
 	if requests := api.seen(); len(requests) != 1 {
 		t.Fatalf("made %d requests, want the one failed batch and no retries during an outage", len(requests))
 	}
-	for id, response := range answers {
-		if response != nil {
-			t.Fatalf("%s = %+v, want no data", id, response)
+	for id, err := range errs {
+		if !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("%s error = %v, want ErrUnavailable", id, err)
 		}
 	}
 }
@@ -450,15 +484,16 @@ func TestOneBadIDDoesNotTurnBatchingOff(t *testing.T) {
 	})
 	client := api.client(time.Second)
 
-	answers := fetchAll(t, client, "imdb", "tt0000001", "tt0000002", "tt0000003", bad)
+	results := fetchAllResults(client, "imdb", "tt0000001", "tt0000002", "tt0000003", bad)
 
 	for _, id := range []string{"tt0000001", "tt0000002", "tt0000003"} {
-		if answers[id] == nil {
-			t.Fatalf("%s got no answer", id)
+		if results[id].response == nil || results[id].err != nil {
+			t.Fatalf("%s = (%+v, %v), want its answer", id, results[id].response, results[id].err)
 		}
 	}
-	if answers[bad] != nil {
-		t.Fatalf("%s = %+v, want no data", bad, answers[bad])
+	// The refusal is this title's alone, and says so.
+	if results[bad].response != nil || !errors.Is(results[bad].err, ErrUnusableAnswer) {
+		t.Fatalf("%s = (%+v, %v), want ErrUnusableAnswer", bad, results[bad].response, results[bad].err)
 	}
 	client.batchMu.Lock()
 	limit := client.batchLimitLocked(batchKey{idProvider: "imdb", mediaType: "movie"})
@@ -479,7 +514,11 @@ func TestInBandQuotaErrorOnABatchPausesWithoutSplitting(t *testing.T) {
 	})
 	client := api.client(time.Second)
 
-	fetchAll(t, client, "imdb", "tt0000001", "tt0000002", "tt0000003")
+	for id, err := range fetchAllErrors(t, client, "imdb", "tt0000001", "tt0000002", "tt0000003") {
+		if !errors.Is(err, ErrQuotaExhausted) {
+			t.Fatalf("%s error = %v, want ErrQuotaExhausted", id, err)
+		}
+	}
 
 	if got := len(api.seen()); got != 1 {
 		t.Fatalf("made %d requests, want only the one batch", got)
@@ -495,6 +534,31 @@ func TestInBandQuotaErrorOnABatchPausesWithoutSplitting(t *testing.T) {
 	}
 }
 
+// TestInBandErrorOnABatchIsAnOutage: an error object answering a whole batch
+// is not about any one title, so every lookup in it reports the outage and
+// nothing is split or paused.
+func TestInBandErrorOnABatchIsAnOutage(t *testing.T) {
+	t.Parallel()
+
+	api := newScriptedAPI(t, func(w http.ResponseWriter, req recordedRequest) {
+		_, _ = io.WriteString(w, `{"error":"Something went wrong"}`)
+	})
+	client := api.client(time.Second)
+
+	for id, err := range fetchAllErrors(t, client, "imdb", "tt0000001", "tt0000002", "tt0000003") {
+		if !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("%s error = %v, want ErrUnavailable", id, err)
+		}
+	}
+
+	if got := len(api.seen()); got != 1 {
+		t.Fatalf("made %d requests, want only the one batch", got)
+	}
+	if client.coolingDown() {
+		t.Fatal("client paused after an error that names no limit")
+	}
+}
+
 func TestBatch429PausesTheClient(t *testing.T) {
 	t.Parallel()
 
@@ -505,8 +569,14 @@ func TestBatch429PausesTheClient(t *testing.T) {
 	})
 	client := api.client(time.Second)
 
-	fetchAll(t, client, "imdb", "tt0000001", "tt0000002")
-	fetchAll(t, client, "imdb", "tt0000003")
+	for id, err := range fetchAllErrors(t, client, "imdb", "tt0000001", "tt0000002") {
+		if !errors.Is(err, ErrQuotaExhausted) {
+			t.Fatalf("%s error = %v, want ErrQuotaExhausted", id, err)
+		}
+	}
+	if _, err := client.FetchMedia(context.Background(), "imdb", "movie", "tt0000003"); !errors.Is(err, ErrQuotaExhausted) {
+		t.Fatalf("paused lookup error = %v, want ErrQuotaExhausted", err)
+	}
 
 	if got := len(api.seen()); got != 1 {
 		t.Fatalf("made %d requests, want the one refused batch and nothing while paused", got)

@@ -42,11 +42,12 @@ const (
 
 // Client fetches titles from MDBList.
 //
-// Every failure MDBList can hand us — no key, a rejected key, an unknown
-// title, an exhausted quota, an outage — resolves to (nil, nil) rather than an
-// error. This plugin only ever fills fields another provider left empty, so a
-// refresh must not fail on its account. The one error the client propagates is
-// the caller's own cancelled or expired context, which the host needs to see.
+// A title MDBList does not know resolves to (nil, nil). Every other failure —
+// no key, a rejected key, an exhausted quota, an outage — is an error wrapping
+// one of the sentinels in errors.go, so Silo can tell "nothing to find" from
+// "ask again later". Silo continues a refresh past a provider error, so this
+// never fails one. The plugin logs each failed request, and a quota pause
+// once, when it begins.
 //
 // Lookups that arrive close together are answered with one batch request (see
 // batch.go), which is what makes a large library fit a small daily quota.
@@ -145,28 +146,29 @@ func (c *Client) snapshot() (apiKey, baseURL, userAgent string) {
 //
 // idProvider is "imdb" or "tmdb" and mediaType is "movie" or "show", matching
 // MDBList's /{media_provider}/{media_type}/{media_id} route. A nil response
-// with a nil error means "no data", which is a normal outcome.
+// with a nil error means "no data", which is a normal outcome; an error says
+// why MDBList could not answer (see errors.go).
 func (c *Client) FetchMedia(ctx context.Context, idProvider, mediaType, mediaID string) (*mediaResponse, error) {
 	if idProvider == "" || mediaType == "" || mediaID == "" {
 		return nil, nil
 	}
 
 	if apiKey, _, _ := c.snapshot(); apiKey == "" {
-		// Not configured yet. Idle rather than noisy.
-		return nil, nil
+		// Not configured yet. The host logs this quietly; nothing here does.
+		return nil, ErrNotConfigured
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if c.coolingDown() {
 		// The quota is spent; the pause was logged when it began.
-		return nil, nil
+		return nil, ErrQuotaExhausted
 	}
 
 	answer := c.enqueue(batchKey{idProvider: idProvider, mediaType: mediaType}, mediaID)
 	select {
-	case response := <-answer:
-		return response, nil
+	case result := <-answer:
+		return result.response, result.err
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -175,8 +177,9 @@ func (c *Client) FetchMedia(ctx context.Context, idProvider, mediaType, mediaID 
 // fetchSingle is the one-title request, used when a lookup has no batch
 // partners or batching is not available for its route. accepted reports
 // whether MDBList took the request: it answered, or said it does not know the
-// title, rather than refusing the request or failing.
-func (c *Client) fetchSingle(ctx context.Context, key batchKey, mediaID string) (*mediaResponse, bool) {
+// title, rather than refusing the request or failing. err says why a lookup
+// that was not accepted got no answer.
+func (c *Client) fetchSingle(ctx context.Context, key batchKey, mediaID string) (*mediaResponse, bool, error) {
 	apiKey, baseURL, _ := c.snapshot()
 	endpoint := fmt.Sprintf("%s/%s/%s/%s?apikey=%s",
 		baseURL,
@@ -187,20 +190,22 @@ func (c *Client) fetchSingle(ctx context.Context, key batchKey, mediaID string) 
 	)
 	label := key.idProvider + "/" + key.mediaType + "/" + mediaID
 
-	status, body, ok := c.send(ctx, http.MethodGet, endpoint, nil, maxResponseBody, label)
-	if !ok {
-		return nil, false
+	status, body, err := c.send(ctx, http.MethodGet, endpoint, nil, maxResponseBody, label)
+	if err != nil {
+		return nil, false, err
 	}
 
 	switch {
 	case status == http.StatusNotFound:
-		return nil, true
+		return nil, true, nil
 	case status == http.StatusUnauthorized, status == http.StatusForbidden:
-		logRejected(status)
-		return nil, false
+		return nil, false, rejected(status)
+	case status >= 500:
+		log.Printf("mdblist: HTTP %d for %s", status, label)
+		return nil, false, fmt.Errorf("%w: HTTP %d", ErrUnavailable, status)
 	case status >= 400:
 		log.Printf("mdblist: HTTP %d for %s", status, label)
-		return nil, false
+		return nil, false, fmt.Errorf("%w: HTTP %d", ErrUnusableAnswer, status)
 	}
 
 	var decoded mediaResponse
@@ -208,53 +213,59 @@ func (c *Client) fetchSingle(ctx context.Context, key batchKey, mediaID string) 
 		// A shape we do not recognise is a plugin problem to fix, not a
 		// refresh to fail.
 		log.Printf("mdblist: decode %s: %v", label, err)
-		return nil, false
+		return nil, false, fmt.Errorf("%w: %v", ErrUnusableAnswer, err)
 	}
 	if decoded.Error != "" {
-		c.noteInBandError(decoded.Error)
-		return nil, false
+		// MDBList reports a rejected key and its limits with status codes,
+		// so an error answering one title is about that title.
+		return nil, false, c.noteInBandError(decoded.Error, ErrUnusableAnswer)
 	}
 	if decoded.Response != nil && !*decoded.Response {
-		return nil, true
+		return nil, true, nil
 	}
-	return &decoded, true
+	return &decoded, true, nil
 }
 
-// noteInBandError handles an error MDBList sent in a 200 body. When it is a
-// rate or quota limit, the client pauses exactly as it would for a 429.
-func (c *Client) noteInBandError(message string) {
+// noteInBandError handles an error MDBList sent in a 200 body and returns the
+// failure it amounts to. When it is a rate or quota limit, the client pauses
+// exactly as it would for a 429. Any other message wraps other, which the
+// caller picks by what the request covered: one title or a whole batch.
+func (c *Client) noteInBandError(message string, other error) error {
 	if strings.Contains(strings.ToLower(message), "limit") {
 		c.pauseForLimit(nil, message)
-		return
+		return ErrQuotaExhausted
 	}
 	log.Printf("mdblist: %s", message)
+	return fmt.Errorf("%w: %s", other, message)
 }
 
-// logRejected reports a 401 or 403. A 403 can also be Cloudflare refusing the
-// request rather than MDBList refusing the key, so the message names both.
-func logRejected(status int) {
+// rejected logs a 401 or 403 and returns the failure. A 403 can also be
+// Cloudflare refusing the request rather than MDBList refusing the key, so
+// the message names both.
+func rejected(status int) error {
 	if status == http.StatusUnauthorized {
 		log.Printf("mdblist: API key rejected (HTTP 401); provider is contributing nothing")
-		return
+	} else {
+		log.Printf("mdblist: request refused (HTTP 403): the API key was rejected or the request was blocked upstream; provider is contributing nothing")
 	}
-	log.Printf("mdblist: request refused (HTTP 403): the API key was rejected or the request was blocked upstream; provider is contributing nothing")
+	return fmt.Errorf("%w: HTTP %d", ErrKeyRejected, status)
 }
 
 // send runs one request through the quota pause and the rate limiter, and
-// records what the response says about the remaining quota. ok is false when
+// records what the response says about the remaining quota. err is set when
 // there is no response worth reading: paused, limiter refused, transport
 // failure, or 429.
-func (c *Client) send(ctx context.Context, method, endpoint string, payload []byte, limit int64, label string) (status int, body []byte, ok bool) {
+func (c *Client) send(ctx context.Context, method, endpoint string, payload []byte, limit int64, label string) (status int, body []byte, err error) {
 	if c.coolingDown() {
-		return 0, nil, false
+		return 0, nil, ErrQuotaExhausted
 	}
 	if err := c.limiter.Wait(ctx); err != nil {
 		log.Printf("mdblist: rate limiter declined %s: %v", label, err)
-		return 0, nil, false
+		return 0, nil, fmt.Errorf("%w: rate limiter: %v", ErrUnavailable, err)
 	}
 	if c.coolingDown() {
 		// The pause may have begun while this request waited its turn.
-		return 0, nil, false
+		return 0, nil, ErrQuotaExhausted
 	}
 
 	var reader io.Reader
@@ -264,7 +275,7 @@ func (c *Client) send(ctx context.Context, method, endpoint string, payload []by
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		log.Printf("mdblist: build request for %s: %v", label, err)
-		return 0, nil, false
+		return 0, nil, fmt.Errorf("%w: build request: %v", ErrUnavailable, err)
 	}
 	_, _, userAgent := c.snapshot()
 	req.Header.Set("Accept", "application/json")
@@ -275,17 +286,16 @@ func (c *Client) send(ctx context.Context, method, endpoint string, payload []by
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		// Network trouble or a timeout: MDBList is unreachable, which is not
-		// a reason to fail the refresh.
+		// Network trouble or a timeout: MDBList is unreachable.
 		log.Printf("mdblist: %s unreachable: %s", label, redact(err.Error()))
-		return 0, nil, false
+		return 0, nil, fmt.Errorf("%w: %s", ErrUnavailable, redact(err.Error()))
 	}
 	defer resp.Body.Close()
 
 	body, err = io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		log.Printf("mdblist: read %s: %s", label, redact(err.Error()))
-		return 0, nil, false
+		return 0, nil, fmt.Errorf("%w: %s", ErrUnavailable, redact(err.Error()))
 	}
 
 	c.observeQuota(resp.Header)
@@ -295,9 +305,9 @@ func (c *Client) send(ctx context.Context, method, endpoint string, payload []by
 		}
 		_ = json.Unmarshal(body, &envelope)
 		c.pauseForLimit(resp.Header, envelope.Error)
-		return resp.StatusCode, nil, false
+		return resp.StatusCode, nil, ErrQuotaExhausted
 	}
-	return resp.StatusCode, body, true
+	return resp.StatusCode, body, nil
 }
 
 // redact strips the API key from a transport error, which embeds the URL.

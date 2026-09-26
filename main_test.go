@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/Silo-Server/silo-plugin-metadata-mdblist/metadata"
@@ -362,24 +364,27 @@ func TestGetMetadataWithoutExternalIDReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestGetMetadataDegradesToEmptyItem covers the availability promise at the
-// RPC boundary: no key, a rejected key, an unknown title or an exhausted quota
-// all produce an empty response, never an error the host has to log.
-func TestGetMetadataDegradesToEmptyItem(t *testing.T) {
+// TestGetMetadataMapsFailuresToStatuses covers the failure contract at the RPC
+// boundary: an unknown title is an empty item, and every reason MDBList cannot
+// answer is the gRPC status Silo's bulk enrichment pass reads it by.
+func TestGetMetadataMapsFailuresToStatuses(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		apiKey string
-		status int
-		body   string
+		name     string
+		apiKey   string
+		status   int
+		body     string
+		wantCode codes.Code
 	}{
-		{name: "no api key configured", apiKey: "", status: http.StatusOK, body: `{"title":"Jaws"}`},
-		{name: "http 401 rejected key", apiKey: "bad", status: http.StatusUnauthorized, body: `{"error":"Invalid API key"}`},
-		{name: "http 404 unknown title", apiKey: "k", status: http.StatusNotFound, body: `{"error":"not found"}`},
-		{name: "http 429 quota exhausted", apiKey: "k", status: http.StatusTooManyRequests, body: `{"error":"limit"}`},
-		{name: "http 500 outage", apiKey: "k", status: http.StatusInternalServerError, body: ``},
-		{name: "quota exhausted behind a 200", apiKey: "k", status: http.StatusOK, body: `{"error":"API request limit reached","response":false}`},
+		{name: "http 404 unknown title", apiKey: "k", status: http.StatusNotFound, body: `{"error":"not found"}`, wantCode: codes.OK},
+		{name: "no api key configured", apiKey: "", status: http.StatusOK, body: `{"title":"Jaws"}`, wantCode: codes.FailedPrecondition},
+		{name: "http 401 rejected key", apiKey: "bad", status: http.StatusUnauthorized, body: `{"error":"Invalid API key"}`, wantCode: codes.Unauthenticated},
+		{name: "http 429 quota exhausted", apiKey: "k", status: http.StatusTooManyRequests, body: `{"error":"limit"}`, wantCode: codes.ResourceExhausted},
+		{name: "http 500 outage", apiKey: "k", status: http.StatusInternalServerError, body: ``, wantCode: codes.Unavailable},
+		{name: "quota exhausted behind a 200", apiKey: "k", status: http.StatusOK, body: `{"error":"API request limit reached","response":false}`, wantCode: codes.ResourceExhausted},
+		{name: "unusable answer", apiKey: "k", status: http.StatusOK, body: `<html>nope</html>`, wantCode: codes.Internal},
+		{name: "title error behind a 200", apiKey: "k", status: http.StatusOK, body: `{"error":"Something went wrong","response":false}`, wantCode: codes.Internal},
 	}
 
 	for _, tt := range tests {
@@ -393,8 +398,8 @@ func TestGetMetadataDegradesToEmptyItem(t *testing.T) {
 				ItemType:    "movie",
 				ProviderIds: mustStruct(t, map[string]any{"imdb": "tt0073195"}),
 			})
-			if err != nil {
-				t.Fatalf("GetMetadata() returned error: %v", err)
+			if got := status.Code(err); got != tt.wantCode {
+				t.Fatalf("GetMetadata() status = %v (%v), want %v", got, err, tt.wantCode)
 			}
 			if response.GetItem() != nil {
 				t.Fatalf("GetMetadata() item = %v, want none", response.GetItem())
@@ -673,14 +678,15 @@ func TestConfigureClearsTheKey(t *testing.T) {
 	t.Parallel()
 
 	rs, ms, api := newServers(t, http.StatusOK, fixtureBody(t))
-	lookup := func() {
+	lookup := func(want codes.Code) {
 		t.Helper()
 
-		if _, err := ms.GetMetadata(context.Background(), &pluginv1.GetMetadataRequest{
+		_, err := ms.GetMetadata(context.Background(), &pluginv1.GetMetadataRequest{
 			ItemType:    "movie",
 			ProviderIds: mustStruct(t, map[string]any{"imdb": "tt0073195"}),
-		}); err != nil {
-			t.Fatalf("GetMetadata() returned error: %v", err)
+		})
+		if got := status.Code(err); got != want {
+			t.Fatalf("GetMetadata() status = %v (%v), want %v", got, err, want)
 		}
 	}
 
@@ -689,7 +695,7 @@ func TestConfigureClearsTheKey(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Configure() returned error: %v", err)
 	}
-	lookup()
+	lookup(codes.OK)
 	if _, keys := api.requests(); !reflect.DeepEqual(keys, []string{"secret"}) {
 		t.Fatalf("apikey query values = %v, want [secret] after Configure with a key", keys)
 	}
@@ -697,7 +703,7 @@ func TestConfigureClearsTheKey(t *testing.T) {
 	if _, err := rs.Configure(context.Background(), &pluginv1.ConfigureRequest{}); err != nil {
 		t.Fatalf("Configure() returned error: %v", err)
 	}
-	lookup()
+	lookup(codes.FailedPrecondition)
 	if _, keys := api.requests(); len(keys) != 1 {
 		t.Fatalf("made %d request(s) in total %v, want 1: an empty Configure must park the provider", len(keys), keys)
 	}
@@ -784,6 +790,11 @@ func TestManifestContract(t *testing.T) {
 	}
 	if want := []any{"imdb", "tmdb"}; !reflect.DeepEqual(lookupIDs, want) {
 		t.Fatalf("lookup_provider_ids = %v, want %v", lookupIDs, want)
+	}
+	// Silo's bulk enrichment pass keeps this many lookups in flight, so the
+	// client can fill its largest batch (provider.maxBatchSize).
+	if got, want := capabilityMetadata["bulk_lookup_limit"], float64(100); got != want {
+		t.Fatalf("bulk_lookup_limit = %v, want %v", got, want)
 	}
 	// required_external_ids means "all of these" to the markers capability;
 	// declaring it here would suggest a constraint Silo does not apply.

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -28,10 +29,12 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.mu.Unlock()
 }
 
+// fetchOne looks up one title. A spent quota is an expected answer in these
+// tests and comes back as a nil response; any other error fails the test.
 func fetchOne(t *testing.T, client *Client) *mediaResponse {
 	t.Helper()
 	response, err := client.FetchMedia(context.Background(), "imdb", "movie", "tt0073195")
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrQuotaExhausted) {
 		t.Fatalf("FetchMedia() returned error: %v", err)
 	}
 	return response
@@ -61,12 +64,10 @@ func TestQuota429PausesUntilRetryAfter(t *testing.T) {
 	client := api.client(0)
 	client.now = clock.Now
 
-	if response := fetchOne(t, client); response != nil {
-		t.Fatalf("429 answered %+v, want no data", response)
-	}
-	for range 3 {
-		if response := fetchOne(t, client); response != nil {
-			t.Fatalf("paused lookup answered %+v, want no data", response)
+	for i := range 4 {
+		response, err := client.FetchMedia(context.Background(), "imdb", "movie", "tt0073195")
+		if response != nil || !errors.Is(err, ErrQuotaExhausted) {
+			t.Fatalf("lookup %d = (%+v, %v), want ErrQuotaExhausted", i, response, err)
 		}
 	}
 	if got := len(api.seen()); got != 1 {

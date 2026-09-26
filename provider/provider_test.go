@@ -607,10 +607,10 @@ func TestGetMetadataRouteSelection(t *testing.T) {
 	}
 }
 
-// TestGetMetadataDegradesWithoutError is the provider-level half of the
-// availability contract: a metadata refresh must never fail because MDBList is
-// unreachable, unauthorised, or out of credits.
-func TestGetMetadataDegradesWithoutError(t *testing.T) {
+// TestGetMetadataReportsWhyMDBListCannotAnswer: a title MDBList does not know
+// is no result; anything else is an error saying why, so the host can tell the
+// two apart.
+func TestGetMetadataReportsWhyMDBListCannotAnswer(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -618,18 +618,19 @@ func TestGetMetadataDegradesWithoutError(t *testing.T) {
 		apiKey       string
 		status       int
 		body         string
+		wantErr      error
 		wantRequests int
 	}{
-		{name: "no api key configured", apiKey: "", status: http.StatusOK, body: `{"title":"Jaws"}`, wantRequests: 0},
-		{name: "unauthorized", apiKey: "bad", status: http.StatusUnauthorized, body: `{"error":"Invalid API key"}`, wantRequests: 1},
-		{name: "forbidden", apiKey: "bad", status: http.StatusForbidden, body: ``, wantRequests: 1},
+		{name: "no api key configured", apiKey: "", status: http.StatusOK, body: `{"title":"Jaws"}`, wantErr: ErrNotConfigured, wantRequests: 0},
+		{name: "unauthorized", apiKey: "bad", status: http.StatusUnauthorized, body: `{"error":"Invalid API key"}`, wantErr: ErrKeyRejected, wantRequests: 1},
+		{name: "forbidden", apiKey: "bad", status: http.StatusForbidden, body: ``, wantErr: ErrKeyRejected, wantRequests: 1},
 		{name: "not found", apiKey: "k", status: http.StatusNotFound, body: `{"error":"not found"}`, wantRequests: 1},
-		{name: "rate limited", apiKey: "k", status: http.StatusTooManyRequests, body: `{"error":"limit"}`, wantRequests: 1},
-		{name: "server error", apiKey: "k", status: http.StatusInternalServerError, body: ``, wantRequests: 1},
-		{name: "quota exhausted behind a 200", apiKey: "k", status: http.StatusOK, body: `{"error":"API request limit reached","response":false}`, wantRequests: 1},
+		{name: "rate limited", apiKey: "k", status: http.StatusTooManyRequests, body: `{"error":"limit"}`, wantErr: ErrQuotaExhausted, wantRequests: 1},
+		{name: "server error", apiKey: "k", status: http.StatusInternalServerError, body: ``, wantErr: ErrUnavailable, wantRequests: 1},
+		{name: "quota exhausted behind a 200", apiKey: "k", status: http.StatusOK, body: `{"error":"API request limit reached","response":false}`, wantErr: ErrQuotaExhausted, wantRequests: 1},
 		{name: "explicit response false", apiKey: "k", status: http.StatusOK, body: `{"response":false}`, wantRequests: 1},
-		{name: "truncated json", apiKey: "k", status: http.StatusOK, body: `{"ratings":[`, wantRequests: 1},
-		{name: "an html error page instead of json", apiKey: "k", status: http.StatusOK, body: `<html><body>nope</body></html>`, wantRequests: 1},
+		{name: "truncated json", apiKey: "k", status: http.StatusOK, body: `{"ratings":[`, wantErr: ErrUnusableAnswer, wantRequests: 1},
+		{name: "an html error page instead of json", apiKey: "k", status: http.StatusOK, body: `<html><body>nope</body></html>`, wantErr: ErrUnusableAnswer, wantRequests: 1},
 	}
 
 	for _, tt := range tests {
@@ -643,8 +644,11 @@ func TestGetMetadataDegradesWithoutError(t *testing.T) {
 				ProviderIDs: map[string]string{"imdb": "tt0073195"},
 				ContentType: "movie",
 			})
-			if err != nil {
+			if tt.wantErr == nil && err != nil {
 				t.Fatalf("GetMetadata() returned error: %v", err)
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("GetMetadata() error = %v, want %v", err, tt.wantErr)
 			}
 			if result != nil {
 				t.Fatalf("GetMetadata() = %+v, want no result", result)
@@ -656,9 +660,8 @@ func TestGetMetadataDegradesWithoutError(t *testing.T) {
 	}
 }
 
-// TestGetMetadataPropagatesContextError is the one exception to "never return
-// an error": a cancelled or expired context is the host's own signal and has to
-// reach it.
+// TestGetMetadataPropagatesContextError: a canceled or expired context is the
+// host's own signal and reaches it unchanged.
 func TestGetMetadataPropagatesContextError(t *testing.T) {
 	t.Parallel()
 
