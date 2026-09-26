@@ -534,6 +534,31 @@ func TestInBandQuotaErrorOnABatchPausesWithoutSplitting(t *testing.T) {
 	}
 }
 
+// TestInBandErrorOnABatchIsAnOutage: an error object answering a whole batch
+// is not about any one title, so every lookup in it reports the outage and
+// nothing is split or paused.
+func TestInBandErrorOnABatchIsAnOutage(t *testing.T) {
+	t.Parallel()
+
+	api := newScriptedAPI(t, func(w http.ResponseWriter, req recordedRequest) {
+		_, _ = io.WriteString(w, `{"error":"Something went wrong"}`)
+	})
+	client := api.client(time.Second)
+
+	for id, err := range fetchAllErrors(t, client, "imdb", "tt0000001", "tt0000002", "tt0000003") {
+		if !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("%s error = %v, want ErrUnavailable", id, err)
+		}
+	}
+
+	if got := len(api.seen()); got != 1 {
+		t.Fatalf("made %d requests, want only the one batch", got)
+	}
+	if client.coolingDown() {
+		t.Fatal("client paused after an error that names no limit")
+	}
+}
+
 func TestBatch429PausesTheClient(t *testing.T) {
 	t.Parallel()
 

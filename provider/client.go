@@ -46,7 +46,8 @@ const (
 // no key, a rejected key, an exhausted quota, an outage — is an error wrapping
 // one of the sentinels in errors.go, so Silo can tell "nothing to find" from
 // "ask again later". Silo continues a refresh past a provider error, so this
-// never fails one; the plugin logs each failure once, when it begins.
+// never fails one. The plugin logs each failed request, and a quota pause
+// once, when it begins.
 //
 // Lookups that arrive close together are answered with one batch request (see
 // batch.go), which is what makes a large library fit a small daily quota.
@@ -215,7 +216,9 @@ func (c *Client) fetchSingle(ctx context.Context, key batchKey, mediaID string) 
 		return nil, false, fmt.Errorf("%w: %v", ErrUnusableAnswer, err)
 	}
 	if decoded.Error != "" {
-		return nil, false, c.noteInBandError(decoded.Error)
+		// MDBList reports a rejected key and its limits with status codes,
+		// so an error answering one title is about that title.
+		return nil, false, c.noteInBandError(decoded.Error, ErrUnusableAnswer)
 	}
 	if decoded.Response != nil && !*decoded.Response {
 		return nil, true, nil
@@ -225,14 +228,15 @@ func (c *Client) fetchSingle(ctx context.Context, key batchKey, mediaID string) 
 
 // noteInBandError handles an error MDBList sent in a 200 body and returns the
 // failure it amounts to. When it is a rate or quota limit, the client pauses
-// exactly as it would for a 429.
-func (c *Client) noteInBandError(message string) error {
+// exactly as it would for a 429. Any other message wraps other, which the
+// caller picks by what the request covered: one title or a whole batch.
+func (c *Client) noteInBandError(message string, other error) error {
 	if strings.Contains(strings.ToLower(message), "limit") {
 		c.pauseForLimit(nil, message)
 		return ErrQuotaExhausted
 	}
 	log.Printf("mdblist: %s", message)
-	return fmt.Errorf("%w: %s", ErrUnavailable, message)
+	return fmt.Errorf("%w: %s", other, message)
 }
 
 // rejected logs a 401 or 403 and returns the failure. A 403 can also be

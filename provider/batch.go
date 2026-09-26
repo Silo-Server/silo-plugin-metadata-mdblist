@@ -241,7 +241,7 @@ func (c *Client) fetchBatch(ctx context.Context, key batchKey, ids []string) (ma
 		// problem, and splitting it would spend requests for nothing.
 		var envelope mediaResponse
 		if json.Unmarshal(body, &envelope) == nil && envelope.Error != "" {
-			return nil, batchFailed, c.noteInBandError(envelope.Error)
+			return nil, batchFailed, c.noteInBandError(envelope.Error, ErrUnavailable)
 		}
 		log.Printf("mdblist: unexpected answer to %s: %v; retrying in smaller requests", label, err)
 		return nil, batchRejected, nil

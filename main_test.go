@@ -384,6 +384,7 @@ func TestGetMetadataMapsFailuresToStatuses(t *testing.T) {
 		{name: "http 500 outage", apiKey: "k", status: http.StatusInternalServerError, body: ``, wantCode: codes.Unavailable},
 		{name: "quota exhausted behind a 200", apiKey: "k", status: http.StatusOK, body: `{"error":"API request limit reached","response":false}`, wantCode: codes.ResourceExhausted},
 		{name: "unusable answer", apiKey: "k", status: http.StatusOK, body: `<html>nope</html>`, wantCode: codes.Internal},
+		{name: "title error behind a 200", apiKey: "k", status: http.StatusOK, body: `{"error":"Something went wrong","response":false}`, wantCode: codes.Internal},
 	}
 
 	for _, tt := range tests {

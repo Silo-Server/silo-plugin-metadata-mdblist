@@ -106,7 +106,8 @@ manifest also declares `bulk_lookup_limit: 100`, which opts the plugin into
 Silo's bulk enrichment pass, and the plugin reports a spent quota, an outage or
 a missing key as a gRPC error rather than an empty item (see below). Servers
 with the pass log those errors at debug level. An older server logs one warning
-per item while the quota is spent, and otherwise behaves as before.
+per item it looks up while no key is saved, the key is rejected, the quota is
+spent, or MDBList is down, and otherwise behaves as before.
 
 A genuine 0% Rotten Tomatoes score is reported as "no score". Zero is the
 absent sentinel in the host's rating merge and columns, so it cannot currently
@@ -154,11 +155,11 @@ later" and its bulk pass does not file a paused lookup as a title with no data:
 | Quota or burst limit spent, including while paused | `RESOURCE_EXHAUSTED` |
 | No API key configured | `FAILED_PRECONDITION` |
 | Key rejected (HTTP 401 or 403) | `UNAUTHENTICATED` |
-| Outage: unreachable, HTTP 5xx, an unexpected error body | `UNAVAILABLE` |
-| MDBList refused or garbled one title's answer | `INTERNAL` |
+| Outage: unreachable, HTTP 5xx, an error body answering a batch | `UNAVAILABLE` |
+| MDBList refused or garbled one title's answer, including an error body | `INTERNAL` |
 
-The plugin logs each failed request, and a quota pause once when it begins. A
-missing key is not logged: the plugin simply stays idle until one is saved.
+The plugin logs each failed request, and a quota pause once when it begins. It
+does not log a missing key: it simply stays idle until one is saved.
 
 ## Building
 

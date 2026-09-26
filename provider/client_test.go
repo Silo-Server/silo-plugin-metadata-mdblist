@@ -135,7 +135,7 @@ func TestFetchMediaClassifiesEveryMDBListAnswer(t *testing.T) {
 		{name: "500 upstream outage", status: http.StatusInternalServerError, body: `oops`, wantErr: ErrUnavailable},
 		{name: "503 upstream outage", status: http.StatusServiceUnavailable, body: ``, wantErr: ErrUnavailable},
 		{name: "200 with a quota error body", status: http.StatusOK, body: `{"error":"API request limit reached"}`, wantErr: ErrQuotaExhausted},
-		{name: "200 with another error body", status: http.StatusOK, body: `{"error":"Something went wrong"}`, wantErr: ErrUnavailable},
+		{name: "200 with a title error body", status: http.StatusOK, body: `{"error":"Something went wrong"}`, wantErr: ErrUnusableAnswer},
 		{name: "200 with response false", status: http.StatusOK, body: `{"response":false}`},
 		{name: "200 with truncated json", status: http.StatusOK, body: `{"ratings":[`, wantErr: ErrUnusableAnswer},
 		{name: "200 with a non-json body", status: http.StatusOK, body: `<html>nope</html>`, wantErr: ErrUnusableAnswer},
