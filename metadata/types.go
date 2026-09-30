@@ -35,17 +35,15 @@ type Ratings struct {
 // names, not MDBList's: the host stores them verbatim, so they stay stable even
 // if MDBList renames a source (it already spells the Rotten Tomatoes audience
 // score three different ways).
+//
+// Silo names imdb and tmdb itself. It keeps any other key only if the
+// capability declares it under rating_sources in manifest.json, so a new key
+// here needs a declaration there too.
 const (
-	RatingSourceIMDB           = "imdb"
-	RatingSourceTMDB           = "tmdb"
-	RatingSourceRTCritic       = "rt_critic"
-	RatingSourceRTAudience     = "rt_audience"
-	RatingSourceMetacritic     = "metacritic"
-	RatingSourceMetacriticUser = "metacritic_user"
-	RatingSourceTrakt          = "trakt"
-	RatingSourceLetterboxd     = "letterboxd"
-	RatingSourceRogerEbert     = "rogerebert"
-	RatingSourceMyAnimeList    = "myanimelist"
+	RatingSourceIMDB       = "imdb"
+	RatingSourceTMDB       = "tmdb"
+	RatingSourceRTCritic   = "rt_critic"
+	RatingSourceRTAudience = "rt_audience"
 	// RatingSourceMDBList is MDBList's own aggregate score for the title.
 	RatingSourceMDBList = "mdblist"
 )
@@ -72,9 +70,9 @@ type MetadataResult struct {
 
 	Ratings Ratings
 
-	// RatingSources carries every source MDBList rated, keyed by the
-	// RatingSource* constants. Hosts that predate per-source storage ignore
-	// it; it never replaces Ratings.
+	// RatingSources carries the IMDb, TMDB and Rotten Tomatoes ratings and
+	// MDBList's own score, keyed by the RatingSource* constants. Hosts that
+	// predate per-source storage ignore it; it never replaces Ratings.
 	RatingSources map[string]RatingSource
 
 	// The fields below fill what the primary provider left empty. The host

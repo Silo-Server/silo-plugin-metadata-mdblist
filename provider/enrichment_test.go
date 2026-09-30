@@ -30,27 +30,58 @@ func TestAudienceSourceSpellings(t *testing.T) {
 }
 
 // TestRatingSourcesPinnedToJawsFixture fixes the common 0-100 scale per source
-// against the captured response, including the one source (rogerebert) that
-// has a value but no score.
+// against the captured response.
 func TestRatingSourcesPinnedToJawsFixture(t *testing.T) {
 	t.Parallel()
 
 	result := resultFromResponse(decodeResponse(t, jawsFixture(t)), "movie")
 
 	want := map[string]metadata.RatingSource{
-		metadata.RatingSourceIMDB:       {Score: 81, Votes: 673852},
-		metadata.RatingSourceMetacritic: {Score: 87, Votes: 21},
-		metadata.RatingSourceTrakt:      {Score: 78, Votes: 14033},
-		metadata.RatingSourceRTCritic:   {Score: 97, Votes: 102},
-		metadata.RatingSourceTMDB:       {Score: 76, Votes: 10114},
-		metadata.RatingSourceLetterboxd: {Score: 80, Votes: 876082},
-		// Roger Ebert's 4 of 4 stars, with no MDBList score.
-		metadata.RatingSourceRogerEbert: {Score: 100},
+		metadata.RatingSourceIMDB:     {Score: 81, Votes: 673852},
+		metadata.RatingSourceRTCritic: {Score: 97, Votes: 102},
+		metadata.RatingSourceTMDB:     {Score: 76, Votes: 10114},
 		// The response's top-level aggregate.
 		metadata.RatingSourceMDBList: {Score: 86},
 	}
 	if !reflect.DeepEqual(result.RatingSources, want) {
 		t.Fatalf("RatingSources = %+v, want %+v", result.RatingSources, want)
+	}
+}
+
+// TestDroppedRatingSourcesAreNotReported pins that the sources whose owners'
+// terms restrict redistribution stay out of RatingSources, even though the
+// Jaws fixture rates four of them.
+func TestDroppedRatingSourcesAreNotReported(t *testing.T) {
+	t.Parallel()
+
+	response := decodeResponse(t, jawsFixture(t))
+
+	// Guard against a vacuous pass: the fixture must still carry a rating
+	// from each of these, or their absence below proves nothing.
+	rated := make(map[string]bool)
+	for _, entry := range response.Ratings {
+		_, hasScore := positive(entry.Score)
+		_, hasValue := positive(entry.Value)
+		rated[entry.Source] = hasScore || hasValue
+	}
+	for _, source := range []string{"metacritic", "trakt", "letterboxd", "rogerebert"} {
+		if !rated[source] {
+			t.Fatalf("fixture has no %s rating; the test needs one to be meaningful", source)
+		}
+	}
+
+	offered := map[string]bool{
+		metadata.RatingSourceIMDB:       true,
+		metadata.RatingSourceTMDB:       true,
+		metadata.RatingSourceRTCritic:   true,
+		metadata.RatingSourceRTAudience: true,
+		metadata.RatingSourceMDBList:    true,
+	}
+	result := resultFromResponse(response, "movie")
+	for name, source := range result.RatingSources {
+		if !offered[name] {
+			t.Fatalf("RatingSources[%q] = %+v, want only imdb, tmdb, rt_critic, rt_audience and mdblist", name, source)
+		}
 	}
 }
 
@@ -63,27 +94,44 @@ func TestRatingSourcesConversionRules(t *testing.T) {
 		want    map[string]metadata.RatingSource
 	}{
 		{
+			// The audience score's "value" scale is unobserved (see
+			// applyRatings), so it counts only with a score.
 			name:    "an unpinned scale is used only with a score",
-			ratings: `[{"source":"metacriticuser","value":7.9,"score":null},{"source":"myanimelist","value":8.4,"score":84}]`,
-			want:    map[string]metadata.RatingSource{metadata.RatingSourceMyAnimeList: {Score: 84}},
+			ratings: `[{"source":"audience","value":4.5,"score":null}]`,
+			want:    nil,
 		},
 		{
 			name:    "a pinned scale converts a value without a score",
-			ratings: `[{"source":"letterboxd","value":7.5,"score":null},{"source":"imdb","value":6.4}]`,
+			ratings: `[{"source":"tomatoes","value":91,"score":null},{"source":"tmdb","value":72},{"source":"imdb","value":6.4}]`,
 			want: map[string]metadata.RatingSource{
-				metadata.RatingSourceLetterboxd: {Score: 75},
-				metadata.RatingSourceIMDB:       {Score: 64},
+				metadata.RatingSourceRTCritic: {Score: 91},
+				metadata.RatingSourceTMDB:     {Score: 72},
+				metadata.RatingSourceIMDB:     {Score: 64},
 			},
 		},
 		{
 			name:    "a conversion past 100 is dropped rather than stored",
-			ratings: `[{"source":"rogerebert","value":5}]`,
+			ratings: `[{"source":"imdb","value":10.5}]`,
 			want:    nil,
 		},
 		{
 			name:    "unknown sources are skipped",
 			ratings: `[{"source":"someday","value":50,"score":50}]`,
 			want:    nil,
+		},
+		{
+			// MDBList aggregates these too. Their owners' terms restrict
+			// redistribution (and Trakt has blocked MDBList), so a rating
+			// from one is dropped even when MDBList normalised it.
+			name: "sources the plugin does not offer are skipped even with a score",
+			ratings: `[{"source":"metacritic","value":87,"score":87},` +
+				`{"source":"metacriticuser","value":7.9,"score":79},` +
+				`{"source":"trakt","value":78,"score":78},` +
+				`{"source":"letterboxd","value":8,"score":80},` +
+				`{"source":"rogerebert","value":4,"score":100},` +
+				`{"source":"myanimelist","value":8.4,"score":84},` +
+				`{"source":"mal","value":8.4,"score":84}]`,
+			want: nil,
 		},
 	}
 

@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	pluginv1 "github.com/Silo-Server/silo-plugin-sdk/pkg/pluginproto/silo/plugin/v1"
 	"google.golang.org/grpc/codes"
@@ -143,22 +144,19 @@ func TestGetMetadataEndToEnd(t *testing.T) {
 	// The host stores these four keys in typed columns (imdb and tmdb out of
 	// 10, rt_critic and rt_audience out of 100). The fixture has no Rotten
 	// Tomatoes audience score, so that key must be absent rather than zero.
-	// "sources" carries every rated source on a 0-100 scale for hosts that
-	// store them; the fixture's metacriticuser and myanimelist entries are
-	// null and must not appear.
+	// "sources" carries the same ratings on a 0-100 scale, plus MDBList's own
+	// score, for hosts that store them. The fixture also rates Metacritic,
+	// Trakt, Letterboxd and Roger Ebert; the plugin does not offer those, so
+	// they must not appear.
 	wantRatings := map[string]any{
 		"imdb":      8.1,
 		"tmdb":      7.6,
 		"rt_critic": float64(97),
 		"sources": map[string]any{
-			"imdb":       map[string]any{"score": float64(81), "votes": float64(673852)},
-			"tmdb":       map[string]any{"score": float64(76), "votes": float64(10114)},
-			"rt_critic":  map[string]any{"score": float64(97), "votes": float64(102)},
-			"metacritic": map[string]any{"score": float64(87), "votes": float64(21)},
-			"trakt":      map[string]any{"score": float64(78), "votes": float64(14033)},
-			"letterboxd": map[string]any{"score": float64(80), "votes": float64(876082)},
-			"rogerebert": map[string]any{"score": float64(100)},
-			"mdblist":    map[string]any{"score": float64(86)},
+			"imdb":      map[string]any{"score": float64(81), "votes": float64(673852)},
+			"tmdb":      map[string]any{"score": float64(76), "votes": float64(10114)},
+			"rt_critic": map[string]any{"score": float64(97), "votes": float64(102)},
+			"mdblist":   map[string]any{"score": float64(86)},
 		},
 	}
 	if got := item.GetRatings().AsMap(); !reflect.DeepEqual(got, wantRatings) {
@@ -528,14 +526,14 @@ func TestRatingsStruct(t *testing.T) {
 			name:    "per-source ratings nest under sources",
 			ratings: metadata.Ratings{IMDB: 8.1},
 			sources: map[string]metadata.RatingSource{
-				metadata.RatingSourceIMDB:       {Score: 81, Votes: 673852},
-				metadata.RatingSourceRogerEbert: {Score: 100},
+				metadata.RatingSourceIMDB:    {Score: 81, Votes: 673852},
+				metadata.RatingSourceMDBList: {Score: 86},
 			},
 			want: map[string]any{
 				"imdb": 8.1,
 				"sources": map[string]any{
-					"imdb":       map[string]any{"score": float64(81), "votes": float64(673852)},
-					"rogerebert": map[string]any{"score": float64(100)},
+					"imdb":    map[string]any{"score": float64(81), "votes": float64(673852)},
+					"mdblist": map[string]any{"score": float64(86)},
 				},
 			},
 		},
@@ -743,8 +741,8 @@ func TestStringMapFromStruct(t *testing.T) {
 
 // TestManifestContract guards the declarations the enrichment-only design
 // depends on: the capability the host looks for, a priority low enough to sit
-// under a primary provider, no season or episode priority at all, and the
-// account config entry the API key arrives in.
+// under a primary provider, no season or episode priority at all, the rating
+// sources the host keeps, and the account config entry the API key arrives in.
 func TestManifestContract(t *testing.T) {
 	t.Parallel()
 
@@ -800,6 +798,38 @@ func TestManifestContract(t *testing.T) {
 	// declaring it here would suggest a constraint Silo does not apply.
 	if _, declared := capabilityMetadata["required_external_ids"]; declared {
 		t.Fatal("capability metadata still declares required_external_ids")
+	}
+
+	// Silo names only imdb and tmdb itself and drops any other key under
+	// ratings.sources that the capability does not declare here. Every other
+	// key the plugin sends must therefore be declared, in a shape the host
+	// accepts: it skips an entry with no name, a name over 24 characters, a
+	// label over 60, or a scale outside (0, 100].
+	ratingSources, ok := capabilityMetadata["rating_sources"].([]any)
+	if !ok {
+		t.Fatalf("capability metadata has no rating_sources list: %v", capabilityMetadata)
+	}
+	var declaredIDs []string
+	for _, raw := range ratingSources {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("rating_sources entry = %v, want an object", raw)
+		}
+		id, _ := entry["id"].(string)
+		declaredIDs = append(declaredIDs, id)
+		if name, _ := entry["name"].(string); name == "" || utf8.RuneCountInString(name) > 24 {
+			t.Fatalf("rating_sources[%q] name = %q, want 1-24 characters", id, name)
+		}
+		if label, _ := entry["label"].(string); utf8.RuneCountInString(label) > 60 {
+			t.Fatalf("rating_sources[%q] label = %q, want at most 60 characters", id, label)
+		}
+		if scale, _ := entry["scale"].(float64); scale <= 0 || scale > 100 {
+			t.Fatalf("rating_sources[%q] scale = %v, want within (0, 100]", id, entry["scale"])
+		}
+	}
+	wantIDs := []string{metadata.RatingSourceRTCritic, metadata.RatingSourceRTAudience, metadata.RatingSourceMDBList}
+	if !reflect.DeepEqual(declaredIDs, wantIDs) {
+		t.Fatalf("rating_sources ids = %v, want %v", declaredIDs, wantIDs)
 	}
 
 	schemas := manifest.GetGlobalConfigSchema()
