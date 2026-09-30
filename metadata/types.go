@@ -38,7 +38,7 @@ type Ratings struct {
 //
 // Silo names imdb and tmdb itself. It keeps any other key only if the
 // capability declares it under rating_sources in manifest.json, so a new key
-// here needs a declaration there too.
+// here needs a declaration there too; TestManifestContract checks both agree.
 const (
 	RatingSourceIMDB       = "imdb"
 	RatingSourceTMDB       = "tmdb"

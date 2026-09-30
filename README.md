@@ -12,6 +12,12 @@ MDBList also aggregates Metacritic, Letterboxd, Trakt, Roger Ebert and
 MyAnimeList ratings. The plugin does not pass those on: their owners' terms
 restrict redistribution, and Trakt has blocked MDBList's API access.
 
+Upgrading from 0.4 or earlier: the plugin stops refreshing those scores but
+cannot delete the ones Silo already stored. A Silo server that reads
+`rating_sources` hides them, because this plugin no longer declares them. An
+older server keeps showing the last stored scores until they are removed on
+the server.
+
 ## Why it has to sit below a primary provider
 
 This plugin never identifies an item. It has no search: `Search` returns zero

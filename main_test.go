@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 	"unicode/utf8"
@@ -827,7 +828,12 @@ func TestManifestContract(t *testing.T) {
 			t.Fatalf("rating_sources[%q] scale = %v, want within (0, 100]", id, entry["scale"])
 		}
 	}
-	wantIDs := []string{metadata.RatingSourceRTCritic, metadata.RatingSourceRTAudience, metadata.RatingSourceMDBList}
+	// Compared against the keys the provider can emit, not a copy of them,
+	// so a key added to the code without a declaration fails here.
+	wantIDs := slices.DeleteFunc(provider.RatingSourceKeys(), func(key string) bool {
+		return key == metadata.RatingSourceIMDB || key == metadata.RatingSourceTMDB
+	})
+	slices.Sort(declaredIDs)
 	if !reflect.DeepEqual(declaredIDs, wantIDs) {
 		t.Fatalf("rating_sources ids = %v, want %v", declaredIDs, wantIDs)
 	}
