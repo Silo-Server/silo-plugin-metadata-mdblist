@@ -30,22 +30,17 @@ func TestAudienceSourceSpellings(t *testing.T) {
 }
 
 // TestRatingSourcesPinnedToJawsFixture fixes the common 0-100 scale per source
-// against the captured response, including the one source (rogerebert) that
-// has a value but no score.
+// against the captured response. The fixture also rates Metacritic, Trakt,
+// Letterboxd and Roger Ebert, so the exact match proves those are dropped.
 func TestRatingSourcesPinnedToJawsFixture(t *testing.T) {
 	t.Parallel()
 
 	result := resultFromResponse(decodeResponse(t, jawsFixture(t)), "movie")
 
 	want := map[string]metadata.RatingSource{
-		metadata.RatingSourceIMDB:       {Score: 81, Votes: 673852},
-		metadata.RatingSourceMetacritic: {Score: 87, Votes: 21},
-		metadata.RatingSourceTrakt:      {Score: 78, Votes: 14033},
-		metadata.RatingSourceRTCritic:   {Score: 97, Votes: 102},
-		metadata.RatingSourceTMDB:       {Score: 76, Votes: 10114},
-		metadata.RatingSourceLetterboxd: {Score: 80, Votes: 876082},
-		// Roger Ebert's 4 of 4 stars, with no MDBList score.
-		metadata.RatingSourceRogerEbert: {Score: 100},
+		metadata.RatingSourceIMDB:     {Score: 81, Votes: 673852},
+		metadata.RatingSourceRTCritic: {Score: 97, Votes: 102},
+		metadata.RatingSourceTMDB:     {Score: 76, Votes: 10114},
 		// The response's top-level aggregate.
 		metadata.RatingSourceMDBList: {Score: 86},
 	}
@@ -58,32 +53,52 @@ func TestRatingSourcesConversionRules(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		ratings string
-		want    map[string]metadata.RatingSource
+		name     string
+		ratings  string
+		want     map[string]metadata.RatingSource
+		wantFlat metadata.Ratings
 	}{
 		{
+			// The audience score's "value" scale is unobserved (see
+			// applyRatings), so it counts only with a score.
 			name:    "an unpinned scale is used only with a score",
-			ratings: `[{"source":"metacriticuser","value":7.9,"score":null},{"source":"myanimelist","value":8.4,"score":84}]`,
-			want:    map[string]metadata.RatingSource{metadata.RatingSourceMyAnimeList: {Score: 84}},
+			ratings: `[{"source":"audience","value":4.5,"score":null}]`,
+			want:    nil,
 		},
 		{
 			name:    "a pinned scale converts a value without a score",
-			ratings: `[{"source":"letterboxd","value":7.5,"score":null},{"source":"imdb","value":6.4}]`,
+			ratings: `[{"source":"tomatoes","value":91,"score":null},{"source":"tmdb","value":72},{"source":"imdb","value":6.4}]`,
 			want: map[string]metadata.RatingSource{
-				metadata.RatingSourceLetterboxd: {Score: 75},
-				metadata.RatingSourceIMDB:       {Score: 64},
+				metadata.RatingSourceRTCritic: {Score: 91},
+				metadata.RatingSourceTMDB:     {Score: 72},
+				metadata.RatingSourceIMDB:     {Score: 64},
 			},
+			wantFlat: metadata.Ratings{IMDB: 6.4, TMDB: 7.2, RTCritic: 91},
 		},
 		{
-			name:    "a conversion past 100 is dropped rather than stored",
-			ratings: `[{"source":"rogerebert","value":5}]`,
-			want:    nil,
+			name: "a figure past the top of its scale is dropped rather than stored",
+			ratings: `[{"source":"imdb","value":10.5},{"source":"tmdb","value":120},` +
+				`{"source":"tomatoes","score":105},{"source":"audience","score":101}]`,
+			want: nil,
 		},
 		{
 			name:    "unknown sources are skipped",
 			ratings: `[{"source":"someday","value":50,"score":50}]`,
 			want:    nil,
+		},
+		{
+			// MDBList aggregates these too. Their owners' terms restrict
+			// redistribution (and Trakt has blocked MDBList), so a rating
+			// from one is dropped even when MDBList normalised it.
+			name: "sources the plugin does not offer are skipped even with a score",
+			ratings: `[{"source":"metacritic","value":87,"score":87},` +
+				`{"source":"metacriticuser","value":7.9,"score":79},` +
+				`{"source":"trakt","value":78,"score":78},` +
+				`{"source":"letterboxd","value":8,"score":80},` +
+				`{"source":"rogerebert","value":4,"score":100},` +
+				`{"source":"myanimelist","value":8.4,"score":84},` +
+				`{"source":"mal","value":8.4,"score":84}]`,
+			want: nil,
 		},
 	}
 
@@ -94,6 +109,9 @@ func TestRatingSourcesConversionRules(t *testing.T) {
 			result := resultFromResponse(decodeResponse(t, ratingsBody(tt.ratings)), "movie")
 			if !reflect.DeepEqual(result.RatingSources, tt.want) {
 				t.Fatalf("RatingSources = %+v, want %+v", result.RatingSources, tt.want)
+			}
+			if result.Ratings != tt.wantFlat {
+				t.Fatalf("Ratings = %+v, want %+v", result.Ratings, tt.wantFlat)
 			}
 		})
 	}

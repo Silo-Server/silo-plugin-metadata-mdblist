@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -199,12 +200,14 @@ var audienceSources = map[string]bool{
 //
 // Each entry carries both "value", on the source's own scale, and "score",
 // MDBList's normalisation. Only "score" has a fixed scale: every non-null score
-// in the fixture is out of 100 (imdb 81, metacritic 87, trakt 78, tomatoes 97,
-// tmdb 76, letterboxd 80), while "value" varies by source (imdb 8.1 of 10,
-// tmdb 76 of 100, tomatoes 97 of 100, rogerebert 4 stars). So "score" is the
-// input, and "value" is only a fallback where the fixture pins its scale.
+// in the fixture is out of 100 (imdb 81, tomatoes 97, tmdb 76), while "value"
+// varies by source (imdb 8.1 of 10, tmdb 76 of 100, tomatoes 97 of 100). So
+// "score" is the input, and "value" is only a fallback where the fixture pins
+// its scale. A figure past the top of its scale means the scale guess is wrong
+// for this title, so it is skipped, as ratingSources skips it.
 //
-// Every other source MDBList reports goes to ratingSources instead.
+// ratingSources reports these same four sources on the common 0-100 scale, plus
+// MDBList's own score. The plugin uses no other source MDBList aggregates.
 func applyRatings(ratings *metadata.Ratings, entries []ratingEntry) {
 	for _, entry := range entries {
 		value, hasValue := positive(entry.Value)
@@ -216,36 +219,36 @@ func applyRatings(ratings *metadata.Ratings, entries []ratingEntry) {
 			// Fixture: value 8.1, score 81 -> rating_imdb 8.1 (0-10). Value
 			// leads here because it keeps the decimal score rounds away.
 			switch {
-			case hasValue:
+			case hasValue && value <= 10:
 				ratings.IMDB = value
-			case hasScore:
+			case hasScore && score <= 100:
 				ratings.IMDB = score / 10
 			}
 		case source == "tmdb":
 			// Fixture: value 76, score 76 -> rating_tmdb 7.6 (0-10).
 			switch {
-			case hasScore:
+			case hasScore && score <= 100:
 				ratings.TMDB = score / 10
-			case hasValue:
+			case hasValue && value <= 100:
 				ratings.TMDB = value / 10
 			}
 		case source == "tomatoes":
 			// Rotten Tomatoes critic score. Fixture: value 97, score 97 ->
 			// rating_rt_critic 97 (integer 0-100).
 			switch {
-			case hasScore:
+			case hasScore && score <= 100:
 				ratings.RTCritic = math.Round(score)
-			case hasValue:
+			case hasValue && value <= 100:
 				ratings.RTCritic = math.Round(value)
 			}
 		case audienceSources[source]:
 			// Rotten Tomatoes audience score -> rating_rt_audience (0-100).
 			// No captured response contains an audience entry, so unlike the
 			// three above, its "value" scale is unobserved. Score is used on
-			// its own: if MDBList ever reports audience the way it reports
-			// rogerebert (a 0-5 star figure in "value"), reading "value" would
-			// write 5 into a column whose real answer is 90.
-			if hasScore {
+			// its own: if MDBList ever put a 0-5 star figure in "value", as it
+			// does for some sources the plugin does not report, reading
+			// "value" would write 5 into a column whose real answer is 90.
+			if hasScore && score <= 100 {
 				ratings.RTAudience = math.Round(score)
 			}
 		}
@@ -253,24 +256,22 @@ func applyRatings(ratings *metadata.Ratings, entries []ratingEntry) {
 }
 
 // valueScales converts a source's own-scale "value" to 0-100 when "score" is
-// null. Only scales the Jaws fixture pins are listed; a source missing here is
-// used only when MDBList supplied a score.
+// null. Only scales the Jaws fixture pins are listed; a source missing here
+// (the Rotten Tomatoes audience score) is used only when MDBList supplied a
+// score.
 //
-//	imdb        8.1 -> 81   (out of 10)
-//	tmdb, trakt, metacritic, tomatoes: value equals score (out of 100)
-//	letterboxd  8   -> 80   (MDBList doubles Letterboxd's 5 stars to 10)
-//	rogerebert  4   -> 100  (out of 4 stars; the fixture has no score)
+//	imdb      8.1 -> 81  (out of 10)
+//	tmdb, tomatoes: value equals score (out of 100)
 var valueScales = map[string]float64{
-	metadata.RatingSourceIMDB:       10,
-	metadata.RatingSourceTMDB:       1,
-	metadata.RatingSourceRTCritic:   1,
-	metadata.RatingSourceMetacritic: 1,
-	metadata.RatingSourceTrakt:      1,
-	metadata.RatingSourceLetterboxd: 10,
-	metadata.RatingSourceRogerEbert: 25,
+	metadata.RatingSourceIMDB:     10,
+	metadata.RatingSourceTMDB:     1,
+	metadata.RatingSourceRTCritic: 1,
 }
 
-// ratingSourceNames maps MDBList's source names onto Silo's keys.
+// ratingSourceNames maps the MDBList sources the plugin reports onto Silo's
+// keys. MDBList also aggregates Metacritic, Letterboxd, Trakt, Roger Ebert and
+// MyAnimeList ratings; the plugin drops them because their owners' terms
+// restrict redistribution, and Trakt has blocked MDBList's API access.
 var ratingSourceNames = map[string]string{
 	"imdb":             metadata.RatingSourceIMDB,
 	"tmdb":             metadata.RatingSourceTMDB,
@@ -278,17 +279,25 @@ var ratingSourceNames = map[string]string{
 	"audience":         metadata.RatingSourceRTAudience,
 	"popcorn":          metadata.RatingSourceRTAudience,
 	"tomatoesaudience": metadata.RatingSourceRTAudience,
-	"metacritic":       metadata.RatingSourceMetacritic,
-	"metacriticuser":   metadata.RatingSourceMetacriticUser,
-	"trakt":            metadata.RatingSourceTrakt,
-	"letterboxd":       metadata.RatingSourceLetterboxd,
-	"rogerebert":       metadata.RatingSourceRogerEbert,
-	"myanimelist":      metadata.RatingSourceMyAnimeList,
-	"mal":              metadata.RatingSourceMyAnimeList,
 }
 
-// ratingSources reports every rated source on the common 0-100 scale, plus
-// MDBList's own aggregate score. An unknown or unrated source is skipped.
+// RatingSourceKeys lists, sorted, every key ratingSources can report: the
+// values of ratingSourceNames plus MDBList's own score. The manifest must
+// declare each of them except imdb and tmdb, which Silo names itself.
+func RatingSourceKeys() []string {
+	keys := []string{metadata.RatingSourceMDBList}
+	for _, key := range ratingSourceNames {
+		if !slices.Contains(keys, key) {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// ratingSources reports the sources in ratingSourceNames on the common 0-100
+// scale, plus MDBList's own aggregate score. Any other source, and an unrated
+// one, is skipped.
 func ratingSources(response *mediaResponse) map[string]metadata.RatingSource {
 	sources := make(map[string]metadata.RatingSource)
 	for _, entry := range response.Ratings {

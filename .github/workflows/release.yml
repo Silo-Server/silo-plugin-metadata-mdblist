@@ -27,10 +27,15 @@ jobs:
             tag="${GITHUB_REF_NAME}"
             version="${tag#v}"
           else
-            # Auto-increment patch from latest tag.
+            # Release manifest.json's version when a change already bumped it
+            # past the latest tag; otherwise auto-increment the patch.
             latest=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+            manifest_version=$(jq -r '.version' manifest.json)
             if [ -z "$latest" ]; then
-              version="0.1.0"
+              version="$manifest_version"
+            elif [ "$manifest_version" != "${latest#v}" ] && \
+                 [ "$(printf '%s\n%s\n' "${latest#v}" "$manifest_version" | sort -V | tail -n1)" = "$manifest_version" ]; then
+              version="$manifest_version"
             else
               base="${latest#v}"
               IFS='.' read -r major minor patch <<< "$base"
@@ -39,12 +44,14 @@ jobs:
             fi
             tag="v${version}"
 
-            # Update manifest.json so the catalog tool sees the correct version.
-            jq --arg v "$version" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add manifest.json
-            git commit -m "chore: bump version to ${version} [skip ci]"
+            if [ "$version" != "$manifest_version" ]; then
+              # Update manifest.json so the catalog tool sees the correct version.
+              jq --arg v "$version" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
+              git add manifest.json
+              git commit -m "chore: bump version to ${version} [skip ci]"
+            fi
             git tag "$tag"
             git push origin HEAD:main --tags
           fi

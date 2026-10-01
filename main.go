@@ -236,15 +236,17 @@ func metadataStruct(result *metadata.MetadataResult) *structpb.Struct {
 }
 
 // ratingsStruct emits the four keys the host stores in typed columns, plus a
-// "sources" object with every source MDBList rated.
+// "sources" object with the per-source ratings the plugin reports.
 //
 // The four flat keys keep their scales (imdb and tmdb 0-10, rt_critic and
 // rt_audience 0-100). A zero is omitted: the host merges fill-empty, so an
 // emitted zero would occupy the column without carrying a rating.
 //
-// "sources" maps a source name to {"score": 0-100, "votes": n}. Hosts that
-// predate per-source storage read only number-valued keys and skip it, so it
-// is safe to send to every host version.
+// "sources" maps a source name to {"score": 0-100, "votes": n}. The host keeps
+// a name other than imdb and tmdb only if manifest.json declares it under
+// rating_sources. Hosts that predate per-source storage read only
+// number-valued keys and skip "sources", so it is safe to send to every host
+// version.
 func ratingsStruct(ratings metadata.Ratings, sources map[string]metadata.RatingSource) *structpb.Struct {
 	values := make(map[string]any, 5)
 	if ratings.IMDB > 0 {
