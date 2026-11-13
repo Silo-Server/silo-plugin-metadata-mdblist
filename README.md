@@ -176,6 +176,11 @@ later" and its bulk pass does not file a paused lookup as a title with no data:
 The plugin logs each failed request, and a quota pause once when it begins. It
 does not log a missing key: it simply stays idle until one is saved.
 
+## Releases
+
+Releases are signed with GitHub artifact attestations. [CONTRIBUTING.md](CONTRIBUTING.md#release)
+describes how maintainers cut a release and how to verify a downloaded binary.
+
 ## Building
 
 ```sh
